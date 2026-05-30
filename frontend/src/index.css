@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --app-bg: #F4F4EE;
+  --surface: #FFFFFF;
+  --surface-alt: #FAFAF5;
+  --surface-hover: #F0F0E8;
+  --border: #E3E3DA;
+  --border-strong: #CFCFC2;
+  --ink-1: #161614;
+  --ink-2: #3F3F3A;
+  --ink-3: #6B6B63;
+  --ink-muted: #9A9A8E;
+  --accent: #0F4C5C;
+  --accent-soft: #E3EEF1;
+  --ink-positive: #15633F;
+  --ink-negative: #A4322B;
+  --ink-warning: #9A5B12;
+  --sidebar-bg: #161614;
+  --sidebar-ink: #E8E8DE;
+  --sidebar-ink-muted: #7A7A70;
+  --sidebar-border: #2A2A26;
+  --panel-header-bg: #1B3A4B;
+  --panel-header-ink: #E8E8DE;
+}
+
+* { box-sizing: border-box; }
+
+body { margin: 0; padding: 0; overflow: hidden; }
+
+.num {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }

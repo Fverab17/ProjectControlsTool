@@ -1,5 +1,12 @@
-﻿node_modules/
+node_modules/
 __pycache__/
+*.pyc
+*.pyo
 .env
 .venv/
-*.pyc
+*.egg-info/
+dist/
+.pytest_cache/
+htmlcov/
+.DS_Store
+Thumbs.db
