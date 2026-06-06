@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   FileBarChart, FolderOpen, GitBranch, LayoutGrid, Receipt, Settings2, CalendarRange,
 } from 'lucide-react'
@@ -20,18 +21,37 @@ const NAV_ITEMS = [
 ]
 
 export function Sidebar({ screen, setScreen, project }: Props) {
+  const [open, setOpen] = useState(false)
   const bac = project?.cost_budget
+
   return (
     <aside
-      className="w-[220px] flex-shrink-0 flex flex-col"
-      style={{ background: 'var(--sidebar-bg)', color: 'var(--sidebar-ink)', borderRight: '1px solid var(--sidebar-border)' }}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      className="flex-shrink-0 flex flex-col overflow-hidden"
+      style={{
+        width: open ? 220 : 44,
+        transition: 'width 180ms ease',
+        background: 'var(--sidebar-bg)',
+        color: 'var(--sidebar-ink)',
+        borderRight: '1px solid var(--sidebar-border)',
+      }}
     >
-      <div className="px-5 py-5" style={{ borderBottom: '1px solid var(--sidebar-border)' }}>
-        <div className="text-[10px] tracking-[0.18em] uppercase" style={{ color: 'var(--sidebar-ink-muted)' }}>Project</div>
-        <div className="mt-1 text-[15px] font-semibold leading-tight">
+      <div
+        className="py-5 overflow-hidden flex-shrink-0"
+        style={{
+          paddingLeft: 14,
+          borderBottom: '1px solid var(--sidebar-border)',
+          minHeight: 72,
+          opacity: open ? 1 : 0,
+          transition: 'opacity 120ms',
+        }}
+      >
+        <div className="text-[10px] tracking-[0.18em] uppercase whitespace-nowrap" style={{ color: 'var(--sidebar-ink-muted)' }}>Project</div>
+        <div className="mt-1 text-[15px] font-semibold leading-tight whitespace-nowrap">
           {project?.code ?? 'Loading…'}
         </div>
-        <div className="mt-2 flex items-center gap-2 text-[11px]" style={{ color: 'var(--sidebar-ink-muted)' }}>
+        <div className="mt-2 flex items-center gap-2 text-[11px] whitespace-nowrap" style={{ color: 'var(--sidebar-ink-muted)' }}>
           <span>{project?.base_currency_code ?? 'USD'}</span>
           {bac != null && (
             <>
@@ -47,23 +67,39 @@ export function Sidebar({ screen, setScreen, project }: Props) {
           <button
             key={id}
             onClick={() => setScreen(id)}
-            className="w-full flex items-center gap-3 px-5 py-2 text-[13px] text-left transition-colors"
+            className="w-full flex items-center gap-3 py-2 text-[13px] text-left transition-colors overflow-hidden"
             style={{
+              paddingLeft: 14,
+              paddingRight: 8,
               background: screen === id ? 'rgba(255,255,255,0.06)' : 'transparent',
               color: screen === id ? 'var(--sidebar-ink)' : 'var(--sidebar-ink-muted)',
               borderLeft: screen === id ? '2px solid #E8E8DE' : '2px solid transparent',
               fontWeight: screen === id ? 500 : 400,
             }}
           >
-            <Icon size={15} strokeWidth={1.6} />
-            <span>{label}</span>
+            <Icon size={15} strokeWidth={1.6} style={{ flexShrink: 0 }} />
+            <span
+              className="whitespace-nowrap"
+              style={{ opacity: open ? 1 : 0, transition: 'opacity 100ms' }}
+            >
+              {label}
+            </span>
           </button>
         ))}
       </nav>
 
-      <div className="px-5 py-4 text-[10px] tracking-wider" style={{ color: 'var(--sidebar-ink-muted)', borderTop: '1px solid var(--sidebar-border)' }}>
-        <div>F. VERA · COST ENGINEER</div>
-        <div className="mt-1">v0.1 · training build</div>
+      <div
+        className="py-4 overflow-hidden"
+        style={{
+          paddingLeft: 14,
+          color: 'var(--sidebar-ink-muted)',
+          borderTop: '1px solid var(--sidebar-border)',
+          opacity: open ? 1 : 0,
+          transition: 'opacity 100ms',
+        }}
+      >
+        <div className="text-[10px] tracking-wider whitespace-nowrap">F. VERA · COST ENGINEER</div>
+        <div className="mt-1 text-[10px] tracking-wider whitespace-nowrap">v0.1 · training build</div>
       </div>
     </aside>
   )
