@@ -1,5 +1,5 @@
 import {
-  FileBarChart, GitBranch, LayoutGrid, Receipt, Settings2, CalendarRange,
+  FileBarChart, FolderOpen, GitBranch, LayoutGrid, Receipt, Settings2, CalendarRange,
 } from 'lucide-react'
 import type { Project } from '../../types/projects'
 
@@ -10,6 +10,7 @@ interface Props {
 }
 
 const NAV_ITEMS = [
+  { id: 'projects',     label: 'Projects',          Icon: FolderOpen },
   { id: 'setup',        label: 'Project Setup',     Icon: Settings2 },
   { id: 'cost-control', label: 'Cost Control',      Icon: LayoutGrid },
   { id: 'evm',          label: 'EVM Dashboard',     Icon: FileBarChart },

@@ -38,13 +38,20 @@ const btnBase: React.CSSProperties = {
   display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer',
 }
 
-export function WbsNavPanel({ visible, selectedCode, visibleIdx, totalCount, search, setSearch, expanded, onSelect, onToggle, onNavigate }: Props) {
+const PANEL_W = 420
+const CODE_COL = '115px'
+const COLS = `${CODE_COL} 1fr`
+
+export function WbsNavPanel({
+  visible, selectedCode, visibleIdx, totalCount,
+  search, setSearch, expanded, onSelect, onToggle, onNavigate,
+}: Props) {
   return (
     <div
       className="flex-shrink-0 flex flex-col border-r overflow-hidden"
-      style={{ width: 310, background: 'var(--surface)' }}
+      style={{ width: PANEL_W, background: 'var(--surface)' }}
     >
-      {/* Panel header */}
+      {/* Header */}
       <div
         className="px-3 py-1.5 text-[11px] font-semibold tracking-wide flex-shrink-0"
         style={{ background: 'var(--panel-header-bg)', color: 'var(--panel-header-ink)' }}
@@ -89,19 +96,19 @@ export function WbsNavPanel({ visible, selectedCode, visibleIdx, totalCount, sea
 
       {/* Column headers */}
       <div
-        className="grid px-2 py-1 flex-shrink-0"
+        className="grid flex-shrink-0"
         style={{
-          gridTemplateColumns: '90px 1fr',
+          gridTemplateColumns: COLS,
           background: 'var(--surface-alt)',
           borderBottom: '1px solid var(--border-strong)',
           fontSize: 9.5, letterSpacing: '0.10em', textTransform: 'uppercase', color: 'var(--ink-3)',
         }}
       >
-        <div>Account ID</div>
-        <div>Description</div>
+        <div style={{ padding: '4px 8px', borderRight: '1px solid var(--border)' }}>Account ID</div>
+        <div style={{ padding: '4px 8px' }}>Description</div>
       </div>
 
-      {/* Tree rows */}
+      {/* Rows */}
       <div className="flex-1 overflow-y-auto">
         {visible.map(row => (
           <WbsNavRow
@@ -127,36 +134,75 @@ interface RowProps {
 }
 
 function WbsNavRow({ row, isSelected, isExpanded, onSelect, onToggle }: RowProps) {
+  const isAccount = !!row.account_code
+  // A row gets an expand toggle if it's a WBS rollup OR a leaf node that has account children
+  const isExpandable = row.is_rollup || row.has_account_children
+
+  const bg = isSelected
+    ? 'var(--accent-soft)'
+    : isAccount
+      ? 'transparent'
+      : row.level === 0 ? '#F0F0E8' : 'transparent'
+
   return (
     <div
       onClick={onSelect}
       className="grid items-center cursor-pointer"
       style={{
-        gridTemplateColumns: '90px 1fr',
+        gridTemplateColumns: COLS,
         borderBottom: '1px solid var(--border)',
-        background: isSelected ? 'var(--accent-soft)' : row.level === 0 ? '#F0F0E8' : 'transparent',
+        background: bg,
         borderLeft: isSelected ? '2px solid var(--accent)' : '2px solid transparent',
+        minHeight: 26,
       }}
     >
+      {/* Code column */}
       <div
-        className="px-2 py-1.5 num"
-        style={{ fontSize: 11, color: isSelected ? 'var(--accent)' : 'var(--ink-2)', fontWeight: row.level === 0 ? 600 : 400 }}
+        className="num truncate"
+        style={{
+          padding: '3px 8px',
+          fontSize: isAccount ? 10.5 : 11,
+          color: isSelected
+            ? 'var(--accent)'
+            : isAccount ? 'var(--ink-2)' : 'var(--ink-2)',
+          fontWeight: isAccount ? 500 : row.level === 0 ? 700 : 500,
+          borderRight: '1px solid var(--border)',
+          letterSpacing: isAccount ? '0.02em' : '0',
+        }}
+        title={isAccount ? row.account_code! : row.code}
       >
-        {row.code}
+        {isAccount ? row.account_code : row.code}
       </div>
-      <div className="py-1.5 pr-2 flex items-center" style={{ paddingLeft: row.level * 10 + 4 }}>
-        {row.is_rollup ? (
+
+      {/* Description column */}
+      <div
+        className="flex items-center truncate"
+        style={{ padding: '3px 6px 3px 0', paddingLeft: isAccount ? row.level * 10 + 4 : row.level * 12 + 4 }}
+      >
+        {isExpandable ? (
           <button
             onClick={e => { e.stopPropagation(); onToggle() }}
-            className="mr-1 flex-shrink-0"
-            style={{ color: 'var(--ink-3)' }}
+            style={{
+              flexShrink: 0, marginRight: 3, background: 'none', border: 'none',
+              cursor: 'pointer', padding: 0, color: 'var(--ink-3)',
+              display: 'flex', alignItems: 'center',
+            }}
           >
             {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
           </button>
         ) : (
-          <span className="mr-1 flex-shrink-0" style={{ width: 14 }} />
+          <span style={{ flexShrink: 0, width: 14 }} />
         )}
-        <span style={{ fontSize: 11, color: isSelected ? 'var(--accent)' : 'var(--ink-1)', fontWeight: row.level === 0 ? 600 : row.is_rollup ? 500 : 400 }}>
+        <span
+          className="truncate"
+          style={{
+            fontSize: isAccount ? 10.5 : 11,
+            color: isSelected ? 'var(--accent)' : 'var(--ink-1)',
+            fontWeight: isAccount
+              ? 400
+              : row.level === 0 ? 700 : row.is_rollup ? 600 : 500,
+          }}
+        >
           {row.description}
         </span>
       </div>

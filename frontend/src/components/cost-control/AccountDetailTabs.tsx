@@ -1,8 +1,8 @@
-import { CheckCircle2 } from 'lucide-react'
 import type { WbsRow } from '../../types/cost-control'
 import { fmt } from '../../lib/fmt'
+import { useAccountChanges, useWbsChanges } from '../../hooks/useChangeOrders'
 
-interface Props { row: WbsRow | null; tab: string; setTab: (t: string) => void }
+interface Props { projectId: string; row: WbsRow | null; tab: string; setTab: (t: string) => void }
 
 const TABS = [
   { id: 'groups',      label: 'Groups / Breakdown Structures' },
@@ -12,7 +12,7 @@ const TABS = [
   { id: 'commitments', label: 'Commitments' },
 ]
 
-export function AccountDetailTabs({ row, tab, setTab }: Props) {
+export function AccountDetailTabs({ projectId, row, tab, setTab }: Props) {
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <div
@@ -44,7 +44,7 @@ export function AccountDetailTabs({ row, tab, setTab }: Props) {
         ) : tab === 'groups' ? <GroupsTab row={row} />
           : tab === 'cost'   ? <TpCostTab row={row} />
           : tab === 'budget' ? <BudgetTab row={row} />
-          : tab === 'changes' ? <ChangesTab row={row} />
+          : tab === 'changes' ? <ChangesTab projectId={projectId} row={row} />
           : tab === 'commitments' ? <CommitmentsTab row={row} />
           : null}
       </div>
@@ -55,17 +55,23 @@ export function AccountDetailTabs({ row, tab, setTab }: Props) {
 // ── Groups tab ──────────────────────────────────────────────────────────────
 
 function GroupsTab({ row }: { row: WbsRow }) {
+  // For CA rows, the WBS parent is the node this account belongs to.
+  // For WBS rollup rows, the row itself is the WBS node.
+  const isCA = row.account_code != null
+  const wbsCode = isCA ? (row.parent_code ?? row.code) : row.code
+  const wbsDesc = isCA ? (row.wbs_node_description ?? '') : row.description
+
   const cbsByLevel0: Record<string, [string, string]> = {
     '1': ['L.E','Engineering Labor'], '2': ['M.E','Major Equipment'],
     '3': ['L.C','Construction Labor'], '4': ['L.E','Commissioning Engineering'],
     '5': ['L.M','Management Labor'], '6': ['E.O','Other Direct Costs'],
   }
-  const level0 = row.code.split('.')[0]
+  const level0 = wbsCode.split('.')[0]
   const [cbsCode, cbsDesc] = cbsByLevel0[level0] ?? ['M.B','Bulk Materials']
 
   const rows = [
-    ['Cost Breakdown Structure', 'CBS',    cbsCode,    cbsDesc],
-    ['Work Breakdown Structure', 'WBS',    row.code,   row.description],
+    ['Cost Breakdown Structure', 'CBS',    cbsCode,  cbsDesc],
+    ['Work Breakdown Structure', 'WBS',    wbsCode,  wbsDesc],
     ['Package Type',            'Module', '2',        '2. Engineering & Procurement'],
     ['Cost Controller',         'Module', '01',       'F. Vera'],
     ['Package Status',          'Module', '2',        '2-ACTIVE'],
@@ -149,13 +155,62 @@ function BudgetTab({ row }: { row: WbsRow }) {
 
 // ── Changes tab ──────────────────────────────────────────────────────────────
 
-function ChangesTab({ row }: { row: WbsRow }) {
-  const changes = [
-    ['CO-001','Additional scope — site conditions','Approved',fmt(row.cost_budget * 0.04),'2023-03-15'],
-    ['CO-007','Design revision — material upgrade','Approved',fmt(row.cost_budget * 0.02),'2023-08-22'],
-    ['CO-015','Schedule acceleration premium',    'Trend',   fmt(row.cost_budget * 0.015),'2024-01-10'],
-  ]
-  return <TabTable headers={['Code','Description','Status','Cost Impact','Date']} rows={changes} rightCols={[3]} />
+function ChangesTab({ projectId, row }: { projectId: string; row: WbsRow }) {
+  const isCA = row.account_code != null
+  const accountResult = useAccountChanges(projectId, isCA ? row.account_code : null)
+  const wbsResult = useWbsChanges(projectId, isCA ? null : row.code)
+  const { data: changes = [], isLoading } = isCA ? accountResult : wbsResult
+
+  if (isLoading) return <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>Loading…</div>
+  if (changes.length === 0) return <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>No change orders for this {isCA ? 'control account' : 'WBS node'}.</div>
+
+  const STATUS_COLOR: Record<string, string> = {
+    approved: 'var(--ink-positive)', submitted: '#D97706',
+    pending: '#6B7280', cancelled: 'var(--ink-negative)',
+  }
+
+  const totalHours = changes.reduce((s, c) => s + c.total_hour_impact, 0)
+  const totalCost  = changes.reduce((s, c) => s + c.total_cost_impact, 0)
+
+  return (
+    <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 11 }}>
+      <thead>
+        <tr style={{ background: 'var(--surface-alt)', borderBottom: '1px solid var(--border-strong)' }}>
+          {['Code', 'Description', 'Status', 'Hours Impact', 'Cost Impact', 'Date'].map((h, i) => (
+            <th key={h} style={{ padding: '5px 10px', fontSize: 9.5, letterSpacing: '0.10em', textTransform: 'uppercase', color: 'var(--ink-3)', textAlign: i >= 3 ? 'right' : 'left' }}>{h}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {changes.map(c => (
+          <tr key={c.change_code} style={{ borderBottom: '1px solid var(--border)' }}>
+            <td className="num" style={{ padding: '5px 10px', fontWeight: 600, color: 'var(--accent)' }}>{c.change_code}</td>
+            <td style={{ padding: '5px 10px' }}>{c.description ?? '—'}</td>
+            <td style={{ padding: '5px 10px' }}>
+              <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: STATUS_COLOR[c.status] ?? 'var(--ink-3)' }}>
+                {c.status}
+              </span>
+            </td>
+            <td className="num" style={{ padding: '5px 10px', textAlign: 'right' }}>{fmt(c.total_hour_impact)}</td>
+            <td className="num" style={{ padding: '5px 10px', textAlign: 'right', fontWeight: 600 }}>{fmt(c.total_cost_impact)}</td>
+            <td className="num" style={{ padding: '5px 10px', textAlign: 'right', color: 'var(--ink-3)' }}>
+              {c.request_date ? new Date(c.request_date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' }) : '—'}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+      <tfoot>
+        <tr style={{ background: 'var(--surface-alt)', borderTop: '1px solid var(--border-strong)' }}>
+          <td colSpan={3} style={{ padding: '5px 10px', fontSize: 9.5, textTransform: 'uppercase', letterSpacing: '0.10em', color: 'var(--ink-3)' }}>
+            Total ({changes.length} change{changes.length !== 1 ? 's' : ''})
+          </td>
+          <td className="num" style={{ padding: '5px 10px', textAlign: 'right', fontWeight: 600 }}>{fmt(totalHours)}</td>
+          <td className="num" style={{ padding: '5px 10px', textAlign: 'right', fontWeight: 600 }}>{fmt(totalCost)}</td>
+          <td />
+        </tr>
+      </tfoot>
+    </table>
+  )
 }
 
 // ── Commitments tab ──────────────────────────────────────────────────────────

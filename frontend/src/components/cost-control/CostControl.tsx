@@ -22,7 +22,13 @@ export function CostControl({ projectId, period }: Props) {
   const effectiveCode = selectedCode ?? (rows[0]?.code ?? null)
 
   const visible = useMemo(() => {
+    const q = search.toLowerCase()
     return rows.filter(row => {
+      // While searching: bypass expand/collapse and match code or description
+      if (q) {
+        return row.code.toLowerCase().includes(q) || row.description.toLowerCase().includes(q)
+      }
+      // Normal mode: respect expand/collapse hierarchy
       if (row.parent_code) {
         let p: string | null = row.parent_code
         while (p) {
@@ -30,9 +36,7 @@ export function CostControl({ projectId, period }: Props) {
           p = rows.find(r => r.code === p)?.parent_code ?? null
         }
       }
-      if (!search) return true
-      const q = search.toLowerCase()
-      return row.code.includes(q) || row.description.toLowerCase().includes(q)
+      return true
     })
   }, [rows, expanded, search])
 
@@ -81,7 +85,7 @@ export function CostControl({ projectId, period }: Props) {
         />
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           <AccountDataPanel row={selectedRow} period={period} />
-          <AccountDetailTabs row={selectedRow} tab={bottomTab} setTab={setBottomTab} />
+          <AccountDetailTabs projectId={projectId} row={selectedRow} tab={bottomTab} setTab={setBottomTab} />
         </div>
       </div>
     </div>

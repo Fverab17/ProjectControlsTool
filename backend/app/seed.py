@@ -19,7 +19,7 @@ from app.models import (
     ProjectMember, User, Vendor, WbsNode,
 )
 from app.models.enums import (
-    ChangeImpact, ChangeReason, ChangeStatus, ContractStatus, CurveType,
+    ChangeCategory, ChangeImpact, ChangeReason, ChangeStatus, ContractStatus, CurveType,
     PctMethod, PriceType, ProjectRole, SystemRole,
 )
 
@@ -659,36 +659,57 @@ async def create_change_orders(db, project, accounts, periods):
 
     change_specs = [
         ("CO-001", "Additional scope — site conditions (civil foundations)",
-         ChangeStatus.approved, ChangeReason.site_conditions, ChangeImpact.cost,
-         "2023-03", [("31-SC", 380_000), ("31-LC", 120_000)]),
+         ChangeStatus.approved, ChangeCategory.scope, ChangeReason.site_conditions, ChangeImpact.cost,
+         "2023-03", "2023-02-15", "2023-04-01",
+         "Civil foundation scope increase due to unexpected subsurface conditions. "
+         "Geotechnical investigation revealed soft soil layers requiring deeper pile installation.",
+         [("31-SC", 380_000), ("31-LC", 120_000)]),
 
         ("CO-007", "Design revision — heat exchanger material upgrade",
-         ChangeStatus.approved, ChangeReason.design, ChangeImpact.cost,
-         "2023-08", [("213-ME", 650_000), ("213-SO", 95_000)]),
+         ChangeStatus.approved, ChangeCategory.growth, ChangeReason.design, ChangeImpact.cost,
+         "2023-08", "2023-07-10", "2023-09-05",
+         "Material upgrade from carbon steel to duplex stainless steel on HX-101 and HX-102 "
+         "driven by revised process corrosion analysis.",
+         [("213-ME", 650_000), ("213-SO", 95_000)]),
 
         ("CO-015", "Schedule acceleration — piping installation premium",
-         ChangeStatus.submitted, ChangeReason.schedule, ChangeImpact.both,
-         "2024-01", [("34-SC", 420_000), ("34-LC", 180_000)]),
+         ChangeStatus.submitted, ChangeCategory.scope, ChangeReason.schedule, ChangeImpact.both,
+         "2024-01", "2023-12-20", None,
+         "Premium labour rates and extended shifts required to recover two weeks of schedule "
+         "delay on critical path piping spools. Client has requested completion by original milestone.",
+         [("34-SC", 420_000), ("34-LC", 180_000)]),
 
         ("CO-018", "Rate escalation — bulk material procurement",
-         ChangeStatus.trend, ChangeReason.rate, ChangeImpact.cost,
-         "2024-02", [("221-MB", 310_000)]),
+         ChangeStatus.pending, ChangeCategory.trend, ChangeReason.rate, ChangeImpact.cost,
+         "2024-02", "2024-01-15", None,
+         "Bulk material index increased 8.4% above budget escalation allowance. "
+         "Driven primarily by structural steel and pipe fittings commodity pricing.",
+         [("221-MB", 310_000)]),
 
         ("CO-022", "Additional instrumentation — regulatory requirement",
-         ChangeStatus.trend, ChangeReason.scope, ChangeImpact.cost,
-         "2024-03", [("224-MB", 275_000), ("13-LE", 95_000)]),
+         ChangeStatus.pending, ChangeCategory.scope, ChangeReason.scope, ChangeImpact.cost,
+         "2024-03", "2024-02-28", None,
+         "New HAZOP action items require additional safety instrumented system (SIS) loops "
+         "on feed pre-heaters. Requirement identified during FEED review with regulatory authority.",
+         [("224-MB", 275_000), ("13-LE", 95_000)]),
     ]
 
-    for code, desc, status, reason, impact, period_code, line_specs in change_specs:
+    for code, desc, status, category, reason, impact, period_code, req_date_str, appr_date_str, scope_notes, line_specs in change_specs:
         period = period_map.get(period_code)
+        req_date = datetime.strptime(req_date_str, "%Y-%m-%d") if req_date_str else None
+        appr_date = datetime.strptime(appr_date_str, "%Y-%m-%d") if appr_date_str else None
         co = ChangeOrder(
             project_id=project.id,
             change_code=code,
             description=desc,
+            category=category,
             status=status,
             reason=reason,
             impact=impact,
-            request_date=period.period_start if period else datetime(2023, 6, 1),
+            request_date=req_date or (period.period_start if period else datetime(2023, 6, 1)),
+            issued_date=req_date,
+            approved_date=appr_date,
+            scope_notes=scope_notes,
             period_id=period.id if period else None,
         )
         db.add(co)

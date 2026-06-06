@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
-from app.models.enums import ChangeImpact, ChangeReason, ChangeStatus
+from app.models.enums import ChangeCategory, ChangeImpact, ChangeReason, ChangeStatus
 
 if TYPE_CHECKING:
     from app.models.cost import BudgetLine, CostAccount
@@ -27,7 +27,11 @@ class ChangeOrder(Base):
     status: Mapped[ChangeStatus] = mapped_column(SAEnum(ChangeStatus, name="change_status"), nullable=False, default=ChangeStatus.trend)
     reason: Mapped[ChangeReason | None] = mapped_column(SAEnum(ChangeReason, name="change_reason"))
     impact: Mapped[ChangeImpact] = mapped_column(SAEnum(ChangeImpact, name="change_impact"), nullable=False, default=ChangeImpact.cost)
+    category: Mapped[ChangeCategory | None] = mapped_column(SAEnum(ChangeCategory, name="change_category"), nullable=True)
     request_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    issued_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    approved_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    scope_notes: Mapped[str | None] = mapped_column(Text)
     period_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("periods.id"))
     added_days: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), default=Decimal("0"))
     pct_complete: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), default=Decimal("0"))

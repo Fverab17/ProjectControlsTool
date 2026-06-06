@@ -16,6 +16,9 @@ export interface WbsRow {
   cpi: number
   vac: number
   account_count: number
+  account_code: string | null
+  wbs_node_description: string | null
+  has_account_children: boolean
 }
 
 export interface CostControlData {

@@ -40,11 +40,21 @@ class InvoiceStatus(str, enum.Enum):
 
 
 class ChangeStatus(str, enum.Enum):
-    trend = "trend"
+    pending = "pending"
     submitted = "submitted"
     approved = "approved"
+    cancelled = "cancelled"
+    # legacy values kept for DB compatibility
+    trend = "trend"
     rejected = "rejected"
     withdrawn = "withdrawn"
+
+
+class ChangeCategory(str, enum.Enum):
+    budget_transfer = "budget_transfer"
+    scope = "scope"
+    growth = "growth"
+    trend = "trend"
 
 
 class ChangeReason(str, enum.Enum):

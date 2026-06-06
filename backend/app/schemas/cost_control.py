@@ -24,6 +24,9 @@ class WbsRowOut(BaseModel):
     vac: float               # always computed: BAC - EAC
 
     account_count: int
+    account_code: str | None = None        # set only on cost-account-level rows
+    wbs_node_description: str | None = None  # WBS node description; set on CA rows (parent node's desc)
+    has_account_children: bool = False     # True for leaf WBS nodes that have direct accounts
 
 
 class CostControlOut(BaseModel):
