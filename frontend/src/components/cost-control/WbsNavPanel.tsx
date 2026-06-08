@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useLocalState } from '../../hooks/useLocalState'
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Filter, Plus, Search, SlidersHorizontal, Trash2 } from 'lucide-react'
 import type { WbsRow } from '../../types/cost-control'
 
@@ -73,10 +74,12 @@ export function WbsNavPanel({
   visible, selectedCode, visibleIdx, totalCount,
   search, setSearch, expanded, onSelect, onToggle, onNavigate,
 }: Props) {
-  const [width, setWidth] = useState(420)
-  const [visibleExtras, setVisibleExtras] = useState<Set<string>>(
-    () => new Set(EXTRA_COLS.filter(c => c.defaultOn).map(c => c.id))
+  const [width, setWidth] = useLocalState<number>('nav_costcontrol_width', 420)
+  const [visibleExtraIds, setVisibleExtraIds] = useLocalState<string[]>(
+    'nav_costcontrol_cols',
+    EXTRA_COLS.filter(c => c.defaultOn).map(c => c.id),
   )
+  const visibleExtras = new Set(visibleExtraIds)
   const [showPicker, setShowPicker] = useState(false)
   const pickerRef = useRef<HTMLDivElement>(null)
 
@@ -103,10 +106,10 @@ export function WbsNavPanel({
   }
 
   const toggleExtra = (id: string) => {
-    setVisibleExtras(prev => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
+    setVisibleExtraIds(prev => {
+      const s = new Set(prev)
+      s.has(id) ? s.delete(id) : s.add(id)
+      return Array.from(s)
     })
   }
 

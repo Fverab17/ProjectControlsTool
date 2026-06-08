@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, Numeric, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Enum as SAEnum, ForeignKey, Numeric, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -28,10 +28,16 @@ class ChangeOrder(Base):
     reason: Mapped[ChangeReason | None] = mapped_column(SAEnum(ChangeReason, name="change_reason"))
     impact: Mapped[ChangeImpact] = mapped_column(SAEnum(ChangeImpact, name="change_impact"), nullable=False, default=ChangeImpact.cost)
     category: Mapped[ChangeCategory | None] = mapped_column(SAEnum(ChangeCategory, name="change_category"), nullable=True)
+    segment: Mapped[str | None] = mapped_column(Text)
+    reference_code: Mapped[str | None] = mapped_column(Text)
+    requester: Mapped[str | None] = mapped_column(Text)
     request_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    status_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
     issued_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
     approved_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    is_final: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     scope_notes: Mapped[str | None] = mapped_column(Text)
+    comments: Mapped[str | None] = mapped_column(Text)
     period_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("periods.id"))
     added_days: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), default=Decimal("0"))
     pct_complete: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), default=Decimal("0"))

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useLocalState } from '../../hooks/useLocalState'
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Filter, Plus, SlidersHorizontal, Trash2 } from 'lucide-react'
 import type { ChangeOrder } from '../../types/changes'
 
@@ -120,10 +121,12 @@ const btnBase: React.CSSProperties = {
 }
 
 export function ChangeNavPanel({ orders, selectedId, onSelect, onAdd }: Props) {
-  const [width, setWidth] = useState(400)
-  const [visibleCols, setVisibleCols] = useState<Set<string>>(
-    () => new Set(ALL_COLS.filter(c => c.defaultOn).map(c => c.id))
+  const [width, setWidth] = useLocalState<number>('nav_changes_width', 400)
+  const [visibleColIds, setVisibleColIds] = useLocalState<string[]>(
+    'nav_changes_cols',
+    ALL_COLS.filter(c => c.defaultOn).map(c => c.id),
   )
+  const visibleCols = new Set(visibleColIds)
   const [showPicker, setShowPicker] = useState(false)
   const pickerRef = useRef<HTMLDivElement>(null)
   const selectedIdx = orders.findIndex(o => o.id === selectedId)
@@ -156,10 +159,10 @@ export function ChangeNavPanel({ orders, selectedId, onSelect, onAdd }: Props) {
   }
 
   const toggleCol = (id: string) => {
-    setVisibleCols(prev => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
+    setVisibleColIds(prev => {
+      const s = new Set(prev)
+      s.has(id) ? s.delete(id) : s.add(id)
+      return Array.from(s)
     })
   }
 

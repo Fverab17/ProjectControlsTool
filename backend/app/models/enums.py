@@ -23,6 +23,19 @@ class PctMethod(str, enum.Enum):
     fifty_fifty = "fifty_fifty"
 
 
+class EtcMethod(str, enum.Enum):
+    # EAC = AC + ETC (user enters ETC manually — PRISM default)
+    manual = "manual"
+    # ETC = BAC - EV;  EAC = AC + ETC
+    budget_remaining = "budget_remaining"
+    # EAC = BAC / CPI; ETC = EAC - AC
+    performance_factor = "performance_factor"
+    # EAC = AC + Open Commitments; used for procurement accounts
+    commitments = "commitments"
+    # ETC = 0; EAC = AC (account 100% complete — mirrors PRISM CLS)
+    closed = "closed"
+
+
 class ContractStatus(str, enum.Enum):
     draft = "draft"
     awarded = "awarded"
@@ -86,3 +99,17 @@ class CurveType(str, enum.Enum):
     front_loaded = "front_loaded"
     back_loaded = "back_loaded"
     milestone = "milestone"
+
+
+class ProjectStatus(str, enum.Enum):
+    active = "active"
+    on_hold = "on_hold"
+    closed = "closed"
+    cancelled = "cancelled"
+    completed = "completed"
+
+
+class ProjectType(str, enum.Enum):
+    capex = "capex"
+    opex = "opex"
+    abex = "abex"

@@ -3,6 +3,7 @@ export interface Project {
   code: string
   title: string
   description: string | null
+  scope_of_work: string | null
   base_currency_code: string
   multi_currency: boolean
   baseline_start: string | null
@@ -12,6 +13,14 @@ export interface Project {
   cost_budget: number | null
   cost_actual: number | null
   cost_eac: number | null
+}
+
+export interface PeriodReport {
+  period_code: string
+  status_color: 'green' | 'amber' | 'red'
+  status_narrative: string | null
+  risks_narrative: string | null
+  learnings_narrative: string | null
 }
 
 export interface ProjectMember {

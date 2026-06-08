@@ -75,6 +75,23 @@ class CurrencyRate(Base):
     period: Mapped["Period"] = relationship(back_populates="currency_rates")
 
 
+class PeriodReport(Base):
+    __tablename__ = "period_reports"
+    __table_args__ = (UniqueConstraint("project_id", "period_code"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    period_code: Mapped[str] = mapped_column(Text, nullable=False)
+    status_color: Mapped[str] = mapped_column(Text, nullable=False, default="green")
+    status_narrative: Mapped[str | None] = mapped_column(Text)
+    risks_narrative: Mapped[str | None] = mapped_column(Text)
+    learnings_narrative: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    project: Mapped["Project"] = relationship(back_populates="period_reports")
+
+
 class Curve(Base):
     __tablename__ = "curves"
     __table_args__ = (UniqueConstraint("project_id", "code"),)
@@ -86,6 +103,10 @@ class Curve(Base):
     curve_type: Mapped[CurveType] = mapped_column(SAEnum(CurveType, name="curve_type"), nullable=False)
 
     project: Mapped["Project"] = relationship(back_populates="curves")
-    cost_accounts: Mapped[list["CostAccount"]] = relationship(back_populates="curve")
+    # foreign_keys disambiguates from CostAccount.approved_curve_id which also points here
+    cost_accounts: Mapped[list["CostAccount"]] = relationship(
+        back_populates="curve",
+        foreign_keys="[CostAccount.curve_id]",
+    )
 
 

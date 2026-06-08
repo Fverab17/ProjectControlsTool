@@ -5,17 +5,35 @@ import { ProjectsRibbon } from './ProjectsRibbon'
 import { ProjectNavPanel } from './ProjectNavPanel'
 import { ProjectDataPanel } from './ProjectDataPanel'
 import { ProjectDetailTabs } from './ProjectDetailTabs'
+import { useLocalState } from '../../hooks/useLocalState'
 import { LayoutGrid, X } from 'lucide-react'
 
 interface Props {
   selectedProjectId: string | null
   onOpenProject: (id: string) => void
+  period: string
 }
 
-export function ProjectsScreen({ selectedProjectId, onOpenProject }: Props) {
+export function ProjectsScreen({ selectedProjectId, onOpenProject, period }: Props) {
   const { data: projects = [], isLoading } = useProjects()
   const [focusedId, setFocusedId] = useState<string | null>(selectedProjectId)
   const [bottomTab, setBottomTab] = useState('members')
+  const [dataPanelHeight, setDataPanelHeight] = useLocalState('cpm:projects:data-panel-height', 320)
+
+  function handleDragStart(e: React.MouseEvent) {
+    e.preventDefault()
+    const startY = e.clientY
+    const startHeight = dataPanelHeight
+    const onMove = (ev: MouseEvent) => {
+      setDataPanelHeight(Math.max(150, Math.min(600, startHeight + ev.clientY - startY)))
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
 
   const { data: projectDetail } = useProject(focusedId)
 
@@ -64,8 +82,17 @@ export function ProjectsScreen({ selectedProjectId, onOpenProject }: Props) {
           onNavigate={navigate}
         />
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          <ProjectDataPanel project={projectDetail ?? focusedProject} />
-          <ProjectDetailTabs detail={projectDetail ?? null} tab={bottomTab} setTab={setBottomTab} />
+          <ProjectDataPanel project={projectDetail ?? focusedProject} height={dataPanelHeight} />
+          <div
+            onMouseDown={handleDragStart}
+            style={{
+              height: 4, flexShrink: 0, cursor: 'row-resize',
+              background: 'var(--border-strong)',
+              borderTop: '1px solid var(--border)',
+              borderBottom: '1px solid var(--border)',
+            }}
+          />
+          <ProjectDetailTabs detail={projectDetail ?? null} tab={bottomTab} setTab={setBottomTab} projectId={focusedId} period={period} />
         </div>
       </div>
     </div>

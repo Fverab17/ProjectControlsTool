@@ -1,7 +1,7 @@
 import type { Project } from '../../types/projects'
 import { fmt } from '../../lib/fmt'
 
-interface Props { project: Project | null }
+interface Props { project: Project | null; height: number }
 
 const labelSt: React.CSSProperties = { fontSize: 9.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }
 const fieldSt: React.CSSProperties = {
@@ -17,9 +17,9 @@ const sectionHeader: React.CSSProperties = {
 
 const fmtDate = (d: string | null) => d ? d.slice(0, 10) : '—'
 
-export function ProjectDataPanel({ project }: Props) {
+export function ProjectDataPanel({ project, height }: Props) {
   if (!project) return (
-    <div className="flex-shrink-0 flex items-center justify-center" style={{ height: 280, color: 'var(--ink-muted)', fontSize: 12 }}>
+    <div className="flex-shrink-0 flex items-center justify-center" style={{ height, color: 'var(--ink-muted)', fontSize: 12 }}>
       Select a project
     </div>
   )
@@ -27,18 +27,22 @@ export function ProjectDataPanel({ project }: Props) {
   return (
     <div
       className="flex-shrink-0 overflow-y-auto"
-      style={{ height: 280, borderBottom: '2px solid var(--border-strong)', background: 'var(--app-bg)' }}
+      style={{ height, borderBottom: '2px solid var(--border-strong)', background: 'var(--app-bg)' }}
     >
       <div className="px-3 py-1.5 text-[11px] font-semibold tracking-wide" style={{ background: 'var(--panel-header-bg)', color: 'var(--panel-header-ink)' }}>
         Projects — Data
       </div>
 
       <div className="p-3 space-y-2.5">
-        {/* Row 1: ID + Currency */}
+        {/* Row 1: ID + Title + Currency + Multi-Currency */}
         <div className="flex gap-3">
-          <div style={{ flex: 1 }}>
+          <div style={{ width: 180 }}>
             <div style={labelSt}>Project ID</div>
             <div style={{ ...monoField, color: 'var(--accent)', fontWeight: 600 }}>{project.code}</div>
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={labelSt}>Project Title</div>
+            <div style={fieldSt}>{project.title}</div>
           </div>
           <div style={{ width: 80 }}>
             <div style={labelSt}>Currency</div>
@@ -50,16 +54,20 @@ export function ProjectDataPanel({ project }: Props) {
           </div>
         </div>
 
-        {/* Title */}
-        <div>
-          <div style={labelSt}>Project Title</div>
-          <div style={fieldSt}>{project.title}</div>
-        </div>
-
         {/* Description */}
         <div>
           <div style={labelSt}>Description</div>
-          <div style={{ ...fieldSt, alignItems: 'flex-start', minHeight: 36, paddingTop: 4 }}>{project.description ?? '—'}</div>
+          <div style={{ ...fieldSt, alignItems: 'flex-start', minHeight: 36, paddingTop: 4 }}>
+            {project.description ?? '—'}
+          </div>
+        </div>
+
+        {/* Scope of Work */}
+        <div>
+          <div style={labelSt}>Scope of Work</div>
+          <div style={{ ...fieldSt, alignItems: 'flex-start', minHeight: 48, paddingTop: 4 }}>
+            {project.scope_of_work ?? '—'}
+          </div>
         </div>
 
         {/* Dates + Cost Summary */}

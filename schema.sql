@@ -17,10 +17,13 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";  -- for gen_random_uuid()
 -- ---------------------------------------------------------------------------
 CREATE TYPE system_role     AS ENUM ('admin', 'instructor', 'student');
 CREATE TYPE project_role    AS ENUM ('pm', 'cost_engineer', 'scheduler', 'controller', 'viewer');
+CREATE TYPE project_status  AS ENUM ('active', 'on_hold', 'closed', 'cancelled', 'completed');
+CREATE TYPE project_type    AS ENUM ('capex', 'opex', 'abex');
 CREATE TYPE pct_method      AS ENUM ('manual', 'weighted_steps', 'rules_of_credit', 'level_of_effort', 'fifty_fifty');
 CREATE TYPE contract_status AS ENUM ('draft', 'awarded', 'active', 'closed', 'cancelled');
 CREATE TYPE invoice_status  AS ENUM ('draft', 'pending', 'approved', 'paid', 'rejected');
-CREATE TYPE change_status   AS ENUM ('trend', 'submitted', 'approved', 'rejected', 'withdrawn');
+CREATE TYPE change_status   AS ENUM ('pending', 'trend', 'submitted', 'approved', 'rejected', 'withdrawn', 'cancelled');
+CREATE TYPE change_category AS ENUM ('budget_transfer', 'scope', 'growth', 'trend');
 CREATE TYPE change_reason   AS ENUM ('scope', 'design', 'site_conditions', 'schedule', 'rate', 'other');
 CREATE TYPE change_impact   AS ENUM ('cost', 'schedule', 'both', 'none');
 CREATE TYPE price_type      AS ENUM ('lump_sum', 'unit_rate', 'reimbursable', 'time_and_materials');
@@ -40,22 +43,43 @@ CREATE TABLE users (
 );
 
 CREATE TABLE projects (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    code                TEXT        NOT NULL UNIQUE,
-    title               TEXT        NOT NULL,
+    id                  UUID           PRIMARY KEY DEFAULT gen_random_uuid(),
+    code                TEXT           NOT NULL UNIQUE,
+    title               TEXT           NOT NULL,
     description         TEXT,
+
+    -- Classification & ownership
+    project_status      project_status,
+    is_closed           BOOLEAN        NOT NULL DEFAULT FALSE,
+    project_type        project_type,
+    region              TEXT,
+    asset               TEXT,
+    sponsor             TEXT,
+    pm_name             TEXT,
+    controls_lead       TEXT,
+    scope_of_work       TEXT,
+    notes               TEXT,
+
+    -- Three baseline date sets: original → approved → control (current)
     baseline_start      DATE,
     baseline_finish     DATE,
+    approved_start      DATE,
+    approved_finish     DATE,
     control_start       DATE,
     control_finish      DATE,
-    base_currency_code  CHAR(3)     NOT NULL DEFAULT 'USD',
-    multi_currency      BOOLEAN     NOT NULL DEFAULT FALSE,
+
+    base_currency_code  CHAR(3)        NOT NULL DEFAULT 'USD',
+    multi_currency      BOOLEAN        NOT NULL DEFAULT FALSE,
+
     -- Denormalized project rollup (refreshed when cost_accounts change)
-    cost_budget         NUMERIC(18,2) DEFAULT 0,
-    cost_actual         NUMERIC(18,2) DEFAULT 0,
-    cost_eac            NUMERIC(18,2) DEFAULT 0,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    cost_budget         NUMERIC(18,2)  DEFAULT 0,
+    cost_actual         NUMERIC(18,2)  DEFAULT 0,
+    cost_eac            NUMERIC(18,2)  DEFAULT 0,
+    cost_ac_variance    NUMERIC(18,2)  DEFAULT 0,
+    budget_remain       NUMERIC(18,2)  DEFAULT 0,
+
+    created_at          TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ    NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE project_members (
@@ -134,18 +158,19 @@ CREATE TABLE curves (
 -- Keep them in sync at the application layer after any time-phased write.
 -- ---------------------------------------------------------------------------
 CREATE TABLE cost_accounts (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id          UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    account_code        TEXT NOT NULL,
-    description         TEXT NOT NULL,
-    master_account_id   UUID REFERENCES cost_accounts(id),   -- self-ref for sub-accounts
-    wbs_node_id         UUID REFERENCES wbs_nodes(id),
-    cbs_node_id         UUID REFERENCES cbs_nodes(id),
-    curve_id            UUID REFERENCES curves(id),
+    id                  UUID       PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id          UUID       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    account_code        TEXT       NOT NULL,
+    description         TEXT       NOT NULL,
+    master_account_id   UUID       REFERENCES cost_accounts(id),
+    wbs_node_id         UUID       REFERENCES wbs_nodes(id),
+    cbs_node_id         UUID       REFERENCES cbs_nodes(id),
+    curve_id            UUID       REFERENCES curves(id),
+    approved_curve_id   UUID       REFERENCES curves(id),
+    vendor_id           UUID       REFERENCES vendors(id),
     discipline          TEXT,
 
     -- User-defined dimensions (OBS, region, area, etc.)
-    -- Real PRISM has 26 of these; 5 is plenty for training.
     dim_1               TEXT,
     dim_2               TEXT,
     dim_3               TEXT,
@@ -153,15 +178,21 @@ CREATE TABLE cost_accounts (
     dim_5               TEXT,
 
     -- Progress
-    pct_complete        NUMERIC(6,4) DEFAULT 0,
-    pct_complete_method pct_method   NOT NULL DEFAULT 'manual',
+    pct_complete          NUMERIC(6,4) DEFAULT 0,
+    pct_complete_prev     NUMERIC(6,4) DEFAULT 0,
+    pct_complete_proposed NUMERIC(6,4) DEFAULT 0,
+    pct_complete_adjusted NUMERIC(6,4) DEFAULT 0,
+    pct_complete_method   pct_method   NOT NULL DEFAULT 'manual',
 
     -- Multi-currency
-    currency_code       CHAR(3) NOT NULL DEFAULT 'USD',
+    currency_code       CHAR(3)    NOT NULL DEFAULT 'USD',
+    rate_type           TEXT,
 
-    -- Parallel date sets
+    -- Three baseline date sets: original → approved → control (current)
     baseline_start      DATE,
     baseline_finish     DATE,
+    approved_start      DATE,
+    approved_finish     DATE,
     control_start       DATE,
     control_finish      DATE,
 
@@ -174,15 +205,21 @@ CREATE TABLE cost_accounts (
     cost_open_commit    NUMERIC(18,2) DEFAULT 0,
     cost_etc            NUMERIC(18,2) DEFAULT 0,
     cost_eac            NUMERIC(18,2) DEFAULT 0,
+    cost_eac_proposed   NUMERIC(18,2) DEFAULT 0,
+    cost_eac_adjusted   NUMERIC(18,2) DEFAULT 0,
+    cost_ac_variance    NUMERIC(18,2) DEFAULT 0,
 
-    -- Parallel hour aggregates
+    -- Hour aggregates (parallel to cost set)
     hour_budget         NUMERIC(18,2) DEFAULT 0,
     hour_earned         NUMERIC(18,2) DEFAULT 0,
     hour_actual         NUMERIC(18,2) DEFAULT 0,
+    hour_incurred       NUMERIC(18,2) DEFAULT 0,
+    hour_commitment     NUMERIC(18,2) DEFAULT 0,
+    hour_open_commit    NUMERIC(18,2) DEFAULT 0,
     hour_etc            NUMERIC(18,2) DEFAULT 0,
     hour_eac            NUMERIC(18,2) DEFAULT 0,
 
-    -- Parallel BAC versions (so dashboards show original vs approved vs control)
+    -- Parallel BAC versions (original vs approved vs control)
     cost_bac_baseline   NUMERIC(18,2) DEFAULT 0,
     cost_bac_approved   NUMERIC(18,2) DEFAULT 0,
     cost_bac_control    NUMERIC(18,2) DEFAULT 0,
@@ -192,6 +229,8 @@ CREATE TABLE cost_accounts (
     cf_adv_pay_pct      NUMERIC(6,4) DEFAULT 0,
     cf_retention_pct    NUMERIC(6,4) DEFAULT 0,
     cash_flow_lag       INT          DEFAULT 0,
+
+    notes               TEXT,
 
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -339,17 +378,27 @@ CREATE INDEX idx_invoice_lines_period ON invoice_lines(period_id);
 -- Change Management
 -- ---------------------------------------------------------------------------
 CREATE TABLE change_orders (
-    id           UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id   UUID          NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    change_code  TEXT          NOT NULL,
-    description  TEXT,
-    status       change_status NOT NULL DEFAULT 'trend',
-    reason       change_reason,
-    impact       change_impact NOT NULL DEFAULT 'cost',
-    request_date DATE,
-    period_id    UUID          REFERENCES periods(id),
-    added_days   NUMERIC(8,2)  DEFAULT 0,
-    pct_complete NUMERIC(6,4)  DEFAULT 0,
+    id             UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id     UUID            NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    change_code    TEXT            NOT NULL,
+    description    TEXT,
+    status         change_status   NOT NULL DEFAULT 'trend',
+    reason         change_reason,
+    impact         change_impact   NOT NULL DEFAULT 'cost',
+    category       change_category,
+    segment        TEXT,
+    reference_code TEXT,
+    requester      TEXT,
+    request_date   DATE,
+    status_date    DATE,
+    issued_date    DATE,
+    approved_date  DATE,
+    is_final       BOOLEAN         NOT NULL DEFAULT FALSE,
+    scope_notes    TEXT,
+    comments       TEXT,
+    period_id      UUID            REFERENCES periods(id),
+    added_days     NUMERIC(8,2)    DEFAULT 0,
+    pct_complete   NUMERIC(6,4)    DEFAULT 0,
     UNIQUE (project_id, change_code)
 );
 

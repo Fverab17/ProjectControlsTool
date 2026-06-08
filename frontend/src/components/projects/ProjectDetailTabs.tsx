@@ -1,11 +1,19 @@
 import type { ProjectDetail } from '../../types/projects'
+import { PeriodReportTab } from './PeriodReportTab'
 
-interface Props { detail: ProjectDetail | null; tab: string; setTab: (t: string) => void }
+interface Props {
+  detail: ProjectDetail | null
+  tab: string
+  setTab: (t: string) => void
+  projectId: string | null
+  period: string
+}
 
 const TABS = [
-  { id: 'members', label: 'User Permissions' },
-  { id: 'periods', label: 'Periods' },
-  { id: 'summary', label: 'Breakdown Summary' },
+  { id: 'members',       label: 'User Permissions' },
+  { id: 'periods',       label: 'Periods' },
+  { id: 'summary',       label: 'Breakdown Summary' },
+  { id: 'period-report', label: 'Period Report' },
 ]
 
 const ROLE_LABELS: Record<string, string> = {
@@ -16,7 +24,7 @@ const ROLE_LABELS: Record<string, string> = {
   viewer: 'Viewer',
 }
 
-export function ProjectDetailTabs({ detail, tab, setTab }: Props) {
+export function ProjectDetailTabs({ detail, tab, setTab, projectId, period }: Props) {
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <div
@@ -43,14 +51,18 @@ export function ProjectDetailTabs({ detail, tab, setTab }: Props) {
       </div>
 
       <div className="flex-1 overflow-auto p-3" style={{ background: 'var(--surface)' }}>
-        {!detail ? (
+        {!detail && tab !== 'period-report' ? (
           <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>Select a project to view details</div>
         ) : tab === 'members' ? (
-          <MembersTab detail={detail} />
+          <MembersTab detail={detail!} />
         ) : tab === 'periods' ? (
-          <PeriodsTab detail={detail} />
+          <PeriodsTab detail={detail!} />
+        ) : tab === 'summary' ? (
+          <SummaryTab detail={detail!} />
+        ) : tab === 'period-report' && projectId ? (
+          <PeriodReportTab projectId={projectId} period={period} />
         ) : (
-          <SummaryTab detail={detail} />
+          <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>Select a project to view details</div>
         )}
       </div>
     </div>

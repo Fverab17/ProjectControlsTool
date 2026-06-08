@@ -1,7 +1,15 @@
-import type { WbsRow } from '../../types/cost-control'
+import { useState } from 'react'
+import type { WbsRow, EtcMethod } from '../../types/cost-control'
+import { ETC_METHOD_LABELS, ETC_METHOD_FORMULA } from '../../types/cost-control'
 import { fmt, pctFmt } from '../../lib/fmt'
 
-interface Props { row: WbsRow | null; period: string }
+interface Props {
+  row: WbsRow | null
+  period: string
+  projectId: string
+  height: number
+  onAccountUpdated?: (accountId: string, etcMethod: EtcMethod) => void
+}
 
 const labelSt: React.CSSProperties = { fontSize: 9.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }
 const fieldSt: React.CSSProperties = {
@@ -12,36 +20,104 @@ const fieldSt: React.CSSProperties = {
 const monoField: React.CSSProperties = { ...fieldSt, fontFamily: '"IBM Plex Mono", monospace' }
 const sectionHeader: React.CSSProperties = { background: '#E0E0D6', borderRadius: '2px 2px 0 0', padding: '4px 12px', fontSize: 11, fontWeight: 600, color: 'var(--ink-1)' }
 
-export function AccountDataPanel({ row, period }: Props) {
+const ETC_METHODS: EtcMethod[] = ['manual', 'budget_remaining', 'performance_factor', 'commitments', 'closed']
+
+export function AccountDataPanel({ row, period, projectId, height, onAccountUpdated }: Props) {
+  const [saving, setSaving] = useState(false)
+
   if (!row) {
     return (
-      <div className="flex-shrink-0 flex items-center justify-center" style={{ height: 300, color: 'var(--ink-muted)', fontSize: 12 }}>
+      <div className="flex-shrink-0 flex items-center justify-center" style={{ height, color: 'var(--ink-muted)', fontSize: 12 }}>
         Select a control account
       </div>
     )
   }
 
-  const baselineBudget  = row.cost_budget * 0.92
-  const approvedChanges = row.cost_budget * 0.08
-  const periodIncurred  = row.cost_actual * 0.06
+  // Capture non-null row for use inside async callbacks
+  const account = row
+  const isAccount = !!account.account_code
+  const etcMethod = (account.etc_method ?? 'manual') as EtcMethod
+
+  const baselineBudget  = account.cost_budget * 0.92
+  const approvedChanges = account.cost_budget * 0.08
+  const periodIncurred  = account.cost_period_incurred
+
+  async function handleEtcMethodChange(method: EtcMethod) {
+    if (!isAccount) return
+    setSaving(true)
+    try {
+      await fetch(`/api/projects/${projectId}/cost-accounts/${account.wbs_node_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ etc_method: method }),
+      })
+      onAccountUpdated?.(account.wbs_node_id, method)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <div
       className="flex-shrink-0 overflow-y-auto"
-      style={{ height: 300, borderBottom: '2px solid var(--border-strong)', background: 'var(--app-bg)' }}
+      style={{ height, borderBottom: '2px solid var(--border-strong)', background: 'var(--app-bg)' }}
     >
       <div className="px-3 py-1.5 text-[11px] font-semibold tracking-wide" style={{ background: 'var(--panel-header-bg)', color: 'var(--panel-header-ink)' }}>
         Control Accounts — Data
       </div>
 
       <div className="p-3 space-y-2.5">
-        {/* Row 1 */}
-        <div className="flex gap-3">
+        {/* Row 1 — Account ID / ETC Method / Currency */}
+        <div className="flex gap-3 items-end">
           <div style={{ flex: 1 }}>
             <div style={labelSt}>Account ID (WBS)</div>
-            <div style={{ ...monoField, color: 'var(--accent)', fontWeight: 600 }}>{row.code}</div>
+            <div style={{ ...monoField, color: 'var(--accent)', fontWeight: 600 }}>{account.code}</div>
           </div>
-          <div style={{ width: 80 }}>
+
+          {/* ETC Forecast Method — only on cost-account rows */}
+          {isAccount && (
+            <div style={{ width: 220 }}>
+              <div style={labelSt}>ETC Forecast Method</div>
+              <select
+                value={etcMethod}
+                disabled={saving}
+                onChange={e => handleEtcMethodChange(e.target.value as EtcMethod)}
+                style={{
+                  ...fieldSt,
+                  marginTop: 2,
+                  width: '100%',
+                  padding: '2px 6px',
+                  fontSize: 11,
+                  color: saving ? 'var(--ink-muted)' : 'var(--ink-1)',
+                  cursor: saving ? 'wait' : 'pointer',
+                  fontFamily: 'inherit',
+                  appearance: 'auto',
+                }}
+              >
+                {ETC_METHODS.map(m => (
+                  <option key={m} value={m}>{ETC_METHOD_LABELS[m]}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Formula hint */}
+          {isAccount && (
+            <div style={{ flexShrink: 0, maxWidth: 260 }}>
+              <div style={labelSt}>Formula</div>
+              <div style={{
+                ...fieldSt,
+                fontFamily: '"IBM Plex Mono", monospace',
+                fontSize: 10,
+                color: 'var(--ink-3)',
+                whiteSpace: 'nowrap',
+              }}>
+                {ETC_METHOD_FORMULA[etcMethod]}
+              </div>
+            </div>
+          )}
+
+          <div style={{ width: 60, flexShrink: 0 }}>
             <div style={labelSt}>Currency</div>
             <div style={monoField}>USD</div>
           </div>
@@ -50,12 +126,12 @@ export function AccountDataPanel({ row, period }: Props) {
         {/* Description */}
         <div>
           <div style={labelSt}>Description</div>
-          <div style={fieldSt}>{row.description}</div>
+          <div style={fieldSt}>{account.description}</div>
         </div>
 
         {/* Misc fields */}
         <div className="flex gap-3">
-          {[['Accounts in WBS', String(row.account_count)], ['Level', String(row.level + 1)], ['Period', period]].map(([label, val]) => (
+          {[['Accounts in WBS', String(account.account_count)], ['Level', String(account.level + 1)], ['Period', period]].map(([label, val]) => (
             <div key={label} style={{ flex: 1 }}>
               <div style={labelSt}>{label}</div>
               <div style={monoField}>{val}</div>
@@ -78,8 +154,8 @@ export function AccountDataPanel({ row, period }: Props) {
               </thead>
               <tbody>
                 {[
-                  { label: 'Hours', values: [baselineBudget, approvedChanges, row.cost_budget, periodIncurred, row.cost_actual, row.cost_open_commit, row.cost_etc, row.cost_eac].map(v => v * 0.028) },
-                  { label: 'Cost',  values: [baselineBudget, approvedChanges, row.cost_budget, periodIncurred, row.cost_actual, row.cost_open_commit, row.cost_etc, row.cost_eac] },
+                  { label: 'Hours', values: [baselineBudget, approvedChanges, account.cost_budget, periodIncurred, account.cost_actual, account.cost_open_commit, account.cost_etc, account.cost_eac].map(v => v * 0.028) },
+                  { label: 'Cost',  values: [baselineBudget, approvedChanges, account.cost_budget, periodIncurred, account.cost_actual, account.cost_open_commit, account.cost_etc, account.cost_eac] },
                 ].map(({ label, values }, ri) => (
                   <tr key={label} style={{ borderBottom: ri === 0 ? '1px solid var(--border)' : 'none' }}>
                     <td style={{ padding: '4px 8px', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--ink-3)' }}>{label}</td>
@@ -102,8 +178,8 @@ export function AccountDataPanel({ row, period }: Props) {
             <div style={sectionHeader}>Percent Complete</div>
             <div style={{ border: '1px solid var(--border-strong)', borderTop: 'none', borderRadius: '0 0 2px 2px', padding: '6px 8px' }}>
               {[
-                ['Current',  pctFmt(row.pct_complete), 'var(--accent)'],
-                ['Previous', pctFmt(Math.max(0, row.pct_complete - 0.04)), null],
+                ['Current',  pctFmt(account.pct_complete), 'var(--accent)'],
+                ['Previous', pctFmt(Math.max(0, account.pct_complete - 0.04)), null],
                 ['Method',   'Manual', null],
               ].map(([k, v, color]) => (
                 <div key={k as string} className="flex justify-between items-center py-0.5">
@@ -120,14 +196,14 @@ export function AccountDataPanel({ row, period }: Props) {
             <div style={{ border: '1px solid var(--border-strong)', borderTop: 'none', borderRadius: '0 0 2px 2px', padding: '6px 8px' }}>
               <div className="grid gap-y-1" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr' }}>
                 {[
-                  ['BAC', fmt(row.cost_budget)],
-                  ['EV',  fmt(row.cost_earned)],
-                  ['AC',  fmt(row.cost_actual)],
-                  ['ETC', fmt(row.cost_etc)],
-                  ['EAC', fmt(row.cost_eac)],
-                  ['VAC', fmt(row.vac)],
-                  ['CPI', row.cpi.toFixed(2)],
-                  ['Commit', fmt(row.cost_open_commit)],
+                  ['BAC', fmt(account.cost_budget)],
+                  ['EV',  fmt(account.cost_earned)],
+                  ['AC',  fmt(account.cost_actual)],
+                  ['ETC', fmt(account.cost_etc)],
+                  ['EAC', fmt(account.cost_eac)],
+                  ['VAC', fmt(account.vac)],
+                  ['CPI', account.cpi.toFixed(2)],
+                  ['Commit', fmt(account.cost_open_commit)],
                 ].map(([k, v]) => (
                   <div key={k} className="flex flex-col">
                     <span style={{ fontSize: 9, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{k}</span>

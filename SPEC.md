@@ -203,6 +203,23 @@ what's settled vs. still open.
   training tool — easier to step through with students.
 - **Open:** S-curve charting library specifics. Recharts is the default but
   for the EVM dashboard we may want richer interactivity.
+- **Open:** Period picker in TopBar is currently a hardcoded list (`2024-01`
+  through `2024-06`). Should eventually be replaced with a fetch from
+  `GET /projects/:id/periods` so it reflects periods that actually exist in
+  the DB (and respects `is_closed`). Deferred until the period management UI
+  is built.
+- **Settled:** Period-close snapshot approach for historical EVM views.
+  `cost_account_periods` stores five snapshot columns (`snap_pct_complete`,
+  `snap_cost_earned`, `snap_cost_actual_to_date`, `snap_cost_etc`,
+  `snap_cost_eac`) populated when `POST /projects/:id/periods/:code/close`
+  is called. When a closed period is selected, `get_cost_control` reads from
+  snapshots instead of live `cost_accounts` values. This enables correct
+  historical ETC/EAC for all five forecast methods (including `manual` and
+  `commitments`, which cannot be recomputed retroactively) and provides the
+  per-period EAC data points needed for EAC trend / S-curve charting.
+  Incurred to date for a closed period = `snap_cost_actual_to_date` (cumulative
+  AC at close). `actual` in `cost_account_periods` remains the incremental
+  period-only spend.
 
 ## 11. Next steps for the build
 

@@ -19,6 +19,7 @@ class CostAccountOut(BaseModel):
     # Progress
     pct_complete: float
     pct_complete_method: str
+    etc_method: str
     currency_code: str
 
     # Schedule dates
@@ -59,3 +60,10 @@ class CostAccountOut(BaseModel):
     cf_adv_pay_pct: float
     cf_retention_pct: float
     cash_flow_lag: int
+
+
+class CostAccountUpdate(BaseModel):
+    etc_method: str | None = None
+    pct_complete: float | None = None
+    pct_complete_method: str | None = None
+    cost_etc: float | None = None

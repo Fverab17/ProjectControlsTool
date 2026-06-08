@@ -127,6 +127,21 @@ export function ChangeDataPanel({ detail, isLoading, onEdit }: Props) {
           <div style={fieldSt}>{detail.description ?? '—'}</div>
         </div>
 
+        {/* Scope / Detail */}
+        <div>
+          <div style={labelSt}>Scope / Detail</div>
+          <div style={{
+            ...fieldSt,
+            minHeight: 64,
+            alignItems: 'flex-start',
+            padding: '5px 7px',
+            whiteSpace: 'pre-wrap',
+            lineHeight: 1.55,
+          }}>
+            {detail.scope_notes ?? <span style={{ color: 'var(--ink-muted)' }}>—</span>}
+          </div>
+        </div>
+
         {/* Details + Summary side by side */}
         <div className="flex gap-3">
           {/* Details */}

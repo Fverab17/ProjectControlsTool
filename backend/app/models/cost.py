@@ -8,12 +8,12 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
-from app.models.enums import PctMethod
+from app.models.enums import EtcMethod, PctMethod
 
 if TYPE_CHECKING:
     from app.models.breakdown import CbsNode, Curve, Period, WbsNode
     from app.models.changes import ChangeLine, ChangeOrder
-    from app.models.procurement import Commitment, InvoiceLine
+    from app.models.procurement import Commitment, InvoiceLine, Vendor
     from app.models.users import Project
 
 
@@ -29,6 +29,8 @@ class CostAccount(Base):
     wbs_node_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("wbs_nodes.id"), index=True)
     cbs_node_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("cbs_nodes.id"), index=True)
     curve_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("curves.id"))
+    approved_curve_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("curves.id"))
+    vendor_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("vendors.id"), index=True)
     discipline: Mapped[str | None] = mapped_column(Text)
 
     dim_1: Mapped[str | None] = mapped_column(Text)
@@ -38,11 +40,20 @@ class CostAccount(Base):
     dim_5: Mapped[str | None] = mapped_column(Text)
 
     pct_complete: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), default=Decimal("0"))
+    pct_complete_prev: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), default=Decimal("0"))
+    pct_complete_proposed: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), default=Decimal("0"))
+    pct_complete_adjusted: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), default=Decimal("0"))
     pct_complete_method: Mapped[PctMethod] = mapped_column(SAEnum(PctMethod, name="pct_method"), nullable=False, default=PctMethod.manual)
-    currency_code: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    etc_method: Mapped[EtcMethod] = mapped_column(SAEnum(EtcMethod, name="etc_method"), nullable=False, default=EtcMethod.manual)
 
+    currency_code: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    rate_type: Mapped[str | None] = mapped_column(Text)
+
+    # Three baseline date sets: original → approved → control (current)
     baseline_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
     baseline_finish: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    approved_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    approved_finish: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
     control_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
     control_finish: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
 
@@ -55,10 +66,17 @@ class CostAccount(Base):
     cost_open_commit: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
     cost_etc: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
     cost_eac: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
+    cost_eac_proposed: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
+    cost_eac_adjusted: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
+    cost_ac_variance: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
 
+    # Hour aggregates — parallel set to cost aggregates
     hour_budget: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
     hour_earned: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
     hour_actual: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
+    hour_incurred: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
+    hour_commitment: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
+    hour_open_commit: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
     hour_etc: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
     hour_eac: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
 
@@ -72,13 +90,18 @@ class CostAccount(Base):
     cf_retention_pct: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), default=Decimal("0"))
     cash_flow_lag: Mapped[int | None] = mapped_column(Integer, default=0)
 
+    notes: Mapped[str | None] = mapped_column(Text)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     project: Mapped["Project"] = relationship(back_populates="cost_accounts")
     wbs_node: Mapped["WbsNode | None"] = relationship(back_populates="cost_accounts")
     cbs_node: Mapped["CbsNode | None"] = relationship(back_populates="cost_accounts")
-    curve: Mapped["Curve | None"] = relationship(back_populates="cost_accounts")
+    # foreign_keys required because two FKs point to curves
+    curve: Mapped["Curve | None"] = relationship(back_populates="cost_accounts", foreign_keys=[curve_id])
+    approved_curve: Mapped["Curve | None"] = relationship("Curve", foreign_keys=[approved_curve_id])
+    vendor: Mapped["Vendor | None"] = relationship("Vendor", foreign_keys=[vendor_id])
     master_account: Mapped["CostAccount | None"] = relationship("CostAccount", remote_side="CostAccount.id", foreign_keys=[master_account_id], back_populates="sub_accounts")
     sub_accounts: Mapped[list["CostAccount"]] = relationship("CostAccount", foreign_keys=[master_account_id], back_populates="master_account")
 
@@ -110,6 +133,15 @@ class CostAccountPeriod(Base):
     hour_budget: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
     hour_earned: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
     hour_actual: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
+
+    # Snapshot fields — populated when the period is closed via close_period().
+    # Capture the forecast state at period close so historical views are accurate
+    # regardless of the account's ETC method (manual ETC cannot be recomputed retroactively).
+    snap_pct_complete:        Mapped[Decimal | None] = mapped_column(Numeric(6,  4))
+    snap_cost_earned:         Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    snap_cost_actual_to_date: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    snap_cost_etc:            Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    snap_cost_eac:            Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
 
     cost_account: Mapped["CostAccount"] = relationship(back_populates="periods")
     period: Mapped["Period"] = relationship(back_populates="cost_account_periods")

@@ -44,6 +44,7 @@ export default function App() {
             <ProjectsScreen
               selectedProjectId={selectedProjectId}
               onOpenProject={handleOpenProject}
+              period={period}
             />
           )}
           {screen === 'cost-control' && selectedProjectId ? (

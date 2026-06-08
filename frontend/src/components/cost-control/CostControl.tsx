@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useCostControl } from '../../hooks/useCostControl'
 import type { WbsRow } from '../../types/cost-control'
 import { CostControlRibbon } from './CostControlRibbon'
@@ -6,17 +7,37 @@ import { CostControlTabBar } from './CostControlTabBar'
 import { WbsNavPanel } from './WbsNavPanel'
 import { AccountDataPanel } from './AccountDataPanel'
 import { AccountDetailTabs } from './AccountDetailTabs'
+import { ImportModal } from './ImportModal'
+import { useLocalState } from '../../hooks/useLocalState'
 
 interface Props { projectId: string; period: string }
 
 export function CostControl({ projectId, period }: Props) {
-  const { data, isLoading, error } = useCostControl(projectId)
+  const { data, isLoading, error } = useCostControl(projectId, period)
+  const queryClient = useQueryClient()
   const [selectedCode, setSelectedCode] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(
     () => new Set(['1', '2', '2.1', '2.2', '3'])
   )
   const [bottomTab, setBottomTab] = useState('groups')
   const [search, setSearch] = useState('')
+  const [showImport, setShowImport] = useState(false)
+  const [dataPanelHeight, setDataPanelHeight] = useLocalState('cpm:cost-control:data-panel-height', 300)
+
+  function handleDragStart(e: React.MouseEvent) {
+    e.preventDefault()
+    const startY = e.clientY
+    const startHeight = dataPanelHeight
+    const onMove = (ev: MouseEvent) => {
+      setDataPanelHeight(Math.max(150, Math.min(600, startHeight + ev.clientY - startY)))
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
 
   const rows: WbsRow[] = data?.rows ?? []
   const effectiveCode = selectedCode ?? (rows[0]?.code ?? null)
@@ -68,7 +89,21 @@ export function CostControl({ projectId, period }: Props) {
 
   return (
     <div className="h-full flex flex-col">
-      <CostControlRibbon />
+      <CostControlRibbon
+        period={period}
+        projectId={projectId}
+        periodIsClosed={data?.period_is_closed ?? false}
+        onPeriodClosed={() => queryClient.invalidateQueries({ queryKey: ['cost-control', projectId, period] })}
+        onImport={() => setShowImport(true)}
+      />
+      {showImport && (
+        <ImportModal
+          period={period}
+          projectId={projectId}
+          onClose={() => setShowImport(false)}
+          onImported={() => queryClient.invalidateQueries({ queryKey: ['cost-control', projectId, period] })}
+        />
+      )}
       <CostControlTabBar />
       <div className="flex-1 flex min-h-0">
         <WbsNavPanel
@@ -84,7 +119,22 @@ export function CostControl({ projectId, period }: Props) {
           onNavigate={navigate}
         />
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          <AccountDataPanel row={selectedRow} period={period} />
+          <AccountDataPanel
+            row={selectedRow}
+            period={period}
+            projectId={projectId}
+            height={dataPanelHeight}
+            onAccountUpdated={() => queryClient.invalidateQueries({ queryKey: ['cost-control', projectId] })}
+          />
+          <div
+            onMouseDown={handleDragStart}
+            style={{
+              height: 4, flexShrink: 0, cursor: 'row-resize',
+              background: 'var(--border-strong)',
+              borderTop: '1px solid var(--border)',
+              borderBottom: '1px solid var(--border)',
+            }}
+          />
           <AccountDetailTabs projectId={projectId} row={selectedRow} tab={bottomTab} setTab={setBottomTab} />
         </div>
       </div>
