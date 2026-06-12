@@ -5,6 +5,10 @@ export interface ChangeLine {
   cost_account_description: string
   hour_impact: number
   cost_impact: number
+  qty_element_id: string | null
+  qty_element_code: string | null
+  qty_element_unit: string | null
+  qty_scope_impact: number | null
 }
 
 export interface ChangeOrder {

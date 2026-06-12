@@ -13,7 +13,7 @@ from app.models.enums import ProjectRole, ProjectStatus, ProjectType, SystemRole
 if TYPE_CHECKING:
     from app.models.breakdown import Curve, CbsNode, Period, PeriodReport, WbsNode
     from app.models.changes import ChangeOrder
-    from app.models.cost import CostAccount
+    from app.models.cost import CostAccount, QtyElement
     from app.models.procurement import Contract
 
 
@@ -81,6 +81,7 @@ class Project(Base):
     contracts: Mapped[list["Contract"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     change_orders: Mapped[list["ChangeOrder"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     period_reports: Mapped[list["PeriodReport"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    qty_elements: Mapped[list["QtyElement"]] = relationship(back_populates="project", cascade="all, delete-orphan")
 
 
 class ProjectMember(Base):

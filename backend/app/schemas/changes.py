@@ -11,6 +11,10 @@ class ChangeLineOut(BaseModel):
     cost_account_description: str
     hour_impact: float
     cost_impact: float
+    qty_element_id: UUID | None = None
+    qty_element_code: str | None = None
+    qty_element_unit: str | None = None
+    qty_scope_impact: float | None = None
 
 
 class ChangeOrderOut(BaseModel):
@@ -63,11 +67,15 @@ class ChangeLineIn(BaseModel):
     account_code: str
     hour_impact: float = 0.0
     cost_impact: float = 0.0
+    qty_element_code: str | None = None
+    qty_scope_impact: float | None = None
 
 
 class ChangeLineUpdate(BaseModel):
     hour_impact: float | None = None
     cost_impact: float | None = None
+    qty_element_code: str | None = None
+    qty_scope_impact: float | None = None
 
 
 class ChangeOrderUpdate(BaseModel):

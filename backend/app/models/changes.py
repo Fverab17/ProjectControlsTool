@@ -11,7 +11,7 @@ from app.db import Base
 from app.models.enums import ChangeCategory, ChangeImpact, ChangeReason, ChangeStatus
 
 if TYPE_CHECKING:
-    from app.models.cost import BudgetLine, CostAccount
+    from app.models.cost import BudgetLine, CostAccount, QtyElement
     from app.models.breakdown import Period
     from app.models.users import Project
 
@@ -56,6 +56,9 @@ class ChangeLine(Base):
     cost_account_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("cost_accounts.id"), nullable=False, index=True)
     hour_impact: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
     cost_impact: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
+    qty_element_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("qty_elements.id"), nullable=True)
+    qty_scope_impact: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0"))
 
     change_order: Mapped["ChangeOrder"] = relationship(back_populates="change_lines")
     cost_account: Mapped["CostAccount"] = relationship(back_populates="change_lines")
+    qty_element: Mapped["QtyElement | None"] = relationship()

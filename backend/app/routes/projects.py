@@ -6,12 +6,13 @@ import io
 from decimal import Decimal as D, InvalidOperation
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from pydantic import BaseModel
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db import get_db
-from app.models import CostAccount, Period, PeriodReport, Project, ProjectMember, User, WbsNode
+from app.models import AccountQtyElement, CostAccount, CostAccountPeriod, Period, PeriodReport, Project, ProjectMember, QtyElement, User, WbsNode
 from app.models.changes import ChangeLine, ChangeOrder
 from app.models.enums import ChangeCategory, ChangeImpact, ChangeReason, ChangeStatus, EtcMethod, PctMethod
 from app.schemas.cost_accounts import CostAccountOut, CostAccountUpdate
@@ -20,7 +21,7 @@ from app.schemas.changes import (
     ChangeOrderDetailOut, ChangeOrderIn, ChangeOrderOut, ChangeOrderUpdate,
     WbsChangeItemOut,
 )
-from app.schemas.cost_control import CostControlOut, ImportActualsResult, ImportErrorRow, PeriodCloseOut
+from app.schemas.cost_control import AccountQtyElementOut, CostControlOut, ImportActualsResult, ImportErrorRow, PeriodCloseOut
 from app.schemas.projects import PeriodReportOut, PeriodReportUpsert, ProjectDetailOut, ProjectMemberOut, ProjectOut
 from app.services.cost_control import close_period, get_cost_control
 
@@ -165,6 +166,111 @@ async def list_cost_accounts(project_id: UUID, db: AsyncSession = Depends(get_db
             cash_flow_lag=a.cash_flow_lag or 0,
         ))
     return out
+
+
+@router.get("/{project_id}/cost-accounts/{account_id}/qty-elements", response_model=list[AccountQtyElementOut])
+async def list_account_qty_elements(project_id: UUID, account_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Quantity element subpane for a cost account — used for QAE progress method display."""
+    result = await db.execute(
+        select(AccountQtyElement, QtyElement)
+        .join(QtyElement, AccountQtyElement.qty_element_id == QtyElement.id)
+        .where(AccountQtyElement.cost_account_id == account_id)
+        .order_by(QtyElement.sort_order)
+    )
+    rows = result.all()
+    out = []
+    for aqe, qe in rows:
+        scope  = float(aqe.qty_scope  or 0)
+        actual = float(aqe.qty_actual or 0)
+        eac    = float(aqe.qty_eac    or 0)
+        pct    = round(actual / eac, 4) if eac > 0 else 0.0
+        out.append(AccountQtyElementOut(
+            id=aqe.id,
+            qty_element_id=qe.id,
+            code=qe.code,
+            description=qe.description,
+            unit=qe.unit,
+            qty_scope=scope,
+            qty_actual=actual,
+            qty_eac=eac,
+            qty_weight=float(aqe.qty_weight or 1),
+            pct_complete=pct,
+        ))
+    return out
+
+
+class QtyElementUpdate(BaseModel):
+    qty_actual: float | None = None
+    qty_eac: float | None = None
+    qty_scope: float | None = None
+    qty_weight: float | None = None
+
+
+@router.patch("/{project_id}/cost-accounts/{account_id}/qty-elements/{aqe_id}", response_model=AccountQtyElementOut)
+async def update_account_qty_element(
+    project_id: UUID,
+    account_id: UUID,
+    aqe_id: UUID,
+    body: QtyElementUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update installed quantity for one element; recomputes account pct_complete via QAE formula."""
+    from decimal import Decimal as D
+
+    aqe = await db.get(AccountQtyElement, aqe_id)
+    if not aqe or aqe.cost_account_id != account_id:
+        raise HTTPException(status_code=404, detail="Quantity element row not found")
+
+    if body.qty_actual is not None:
+        aqe.qty_actual = D(str(body.qty_actual))
+    if body.qty_eac is not None:
+        aqe.qty_eac = D(str(body.qty_eac))
+    if body.qty_scope is not None:
+        aqe.qty_scope = D(str(body.qty_scope))
+    if body.qty_weight is not None:
+        aqe.qty_weight = D(str(body.qty_weight))
+
+    # Recompute account pct_complete using QAE weighted formula:
+    # pct = Σ(weight × actual/eac) / Σ(weight)
+    all_aqe_result = await db.execute(
+        select(AccountQtyElement).where(AccountQtyElement.cost_account_id == account_id)
+    )
+    all_aqe = all_aqe_result.scalars().all()
+
+    total_weight = sum(float(e.qty_weight or 0) for e in all_aqe)
+    if total_weight > 0:
+        weighted_sum = sum(
+            float(e.qty_weight or 0) * (float(e.qty_actual or 0) / float(e.qty_eac or 1) if float(e.qty_eac or 0) > 0 else 0)
+            for e in all_aqe
+        )
+        new_pct = round(weighted_sum / total_weight, 4)
+    else:
+        new_pct = 0.0
+
+    account = await db.get(CostAccount, account_id)
+    if account:
+        account.pct_complete = D(str(new_pct))
+
+    await db.commit()
+    await db.refresh(aqe)
+
+    qe_result = await db.execute(select(QtyElement).where(QtyElement.id == aqe.qty_element_id))
+    qe = qe_result.scalar_one()
+
+    actual = float(aqe.qty_actual or 0)
+    eac    = float(aqe.qty_eac    or 0)
+    return AccountQtyElementOut(
+        id=aqe.id,
+        qty_element_id=qe.id,
+        code=qe.code,
+        description=qe.description,
+        unit=qe.unit,
+        qty_scope=float(aqe.qty_scope or 0),
+        qty_actual=actual,
+        qty_eac=eac,
+        qty_weight=float(aqe.qty_weight or 1),
+        pct_complete=round(actual / eac, 4) if eac > 0 else 0.0,
+    )
 
 
 @router.get("/{project_id}/cost-control", response_model=CostControlOut)
@@ -541,7 +647,10 @@ async def get_change_order(project_id: UUID, co_id: UUID, db: AsyncSession = Dep
     result = await db.execute(
         select(ChangeOrder)
         .where(ChangeOrder.project_id == project_id, ChangeOrder.id == co_id)
-        .options(selectinload(ChangeOrder.change_lines).selectinload(ChangeLine.cost_account))
+        .options(
+            selectinload(ChangeOrder.change_lines).selectinload(ChangeLine.cost_account),
+            selectinload(ChangeOrder.change_lines).selectinload(ChangeLine.qty_element),
+        )
     )
     co = result.scalar_one_or_none()
     if not co:
@@ -555,6 +664,10 @@ async def get_change_order(project_id: UUID, co_id: UUID, db: AsyncSession = Dep
             cost_account_description=l.cost_account.description,
             hour_impact=float(l.hour_impact or 0),
             cost_impact=float(l.cost_impact or 0),
+            qty_element_id=l.qty_element_id,
+            qty_element_code=l.qty_element.code if l.qty_element else None,
+            qty_element_unit=l.qty_element.unit if l.qty_element else None,
+            qty_scope_impact=float(l.qty_scope_impact) if l.qty_scope_impact is not None else None,
         )
         for l in co.change_lines
     ]
@@ -580,11 +693,25 @@ async def add_change_line(
     if not account:
         raise HTTPException(status_code=404, detail=f"Cost account '{body.account_code}' not found")
 
+    qty_elem = None
+    if body.qty_element_code:
+        qe_result = await db.execute(
+            select(QtyElement).where(
+                QtyElement.project_id == project_id,
+                QtyElement.code == body.qty_element_code,
+            )
+        )
+        qty_elem = qe_result.scalar_one_or_none()
+        if not qty_elem:
+            raise HTTPException(status_code=404, detail=f"Qty element '{body.qty_element_code}' not found")
+
     line = ChangeLine(
         change_order_id=co_id,
         cost_account_id=account.id,
         hour_impact=Decimal(str(body.hour_impact)),
         cost_impact=Decimal(str(body.cost_impact)),
+        qty_element_id=qty_elem.id if qty_elem else None,
+        qty_scope_impact=Decimal(str(body.qty_scope_impact)) if body.qty_scope_impact is not None else None,
     )
     db.add(line)
     await db.commit()
@@ -596,6 +723,10 @@ async def add_change_line(
         cost_account_description=account.description,
         hour_impact=float(line.hour_impact or 0),
         cost_impact=float(line.cost_impact or 0),
+        qty_element_id=line.qty_element_id,
+        qty_element_code=qty_elem.code if qty_elem else None,
+        qty_element_unit=qty_elem.unit if qty_elem else None,
+        qty_scope_impact=float(line.qty_scope_impact) if line.qty_scope_impact is not None else None,
     )
 
 
@@ -606,7 +737,7 @@ async def update_change_line(
     result = await db.execute(
         select(ChangeLine)
         .where(ChangeLine.id == line_id, ChangeLine.change_order_id == co_id)
-        .options(selectinload(ChangeLine.cost_account))
+        .options(selectinload(ChangeLine.cost_account), selectinload(ChangeLine.qty_element))
     )
     line = result.scalar_one_or_none()
     if not line:
@@ -617,6 +748,26 @@ async def update_change_line(
     if body.cost_impact is not None:
         line.cost_impact = Decimal(str(body.cost_impact))
 
+    qty_elem = line.qty_element
+    if body.qty_element_code is not None:
+        if body.qty_element_code == "":
+            line.qty_element_id = None
+            line.qty_scope_impact = None
+            qty_elem = None
+        else:
+            qe_result = await db.execute(
+                select(QtyElement).where(
+                    QtyElement.project_id == project_id,
+                    QtyElement.code == body.qty_element_code,
+                )
+            )
+            qty_elem = qe_result.scalar_one_or_none()
+            if not qty_elem:
+                raise HTTPException(status_code=404, detail=f"Qty element '{body.qty_element_code}' not found")
+            line.qty_element_id = qty_elem.id
+    if body.qty_scope_impact is not None:
+        line.qty_scope_impact = Decimal(str(body.qty_scope_impact))
+
     await db.commit()
     await db.refresh(line)
     return ChangeLineOut(
@@ -626,6 +777,10 @@ async def update_change_line(
         cost_account_description=line.cost_account.description,
         hour_impact=float(line.hour_impact or 0),
         cost_impact=float(line.cost_impact or 0),
+        qty_element_id=line.qty_element_id,
+        qty_element_code=qty_elem.code if qty_elem else None,
+        qty_element_unit=qty_elem.unit if qty_elem else None,
+        qty_scope_impact=float(line.qty_scope_impact) if line.qty_scope_impact is not None else None,
     )
 
 
@@ -708,12 +863,15 @@ async def update_change_order(
     result = await db.execute(
         select(ChangeOrder)
         .where(ChangeOrder.project_id == project_id, ChangeOrder.id == co_id)
-        .options(selectinload(ChangeOrder.change_lines))
+        .options(
+            selectinload(ChangeOrder.change_lines).selectinload(ChangeLine.qty_element),
+        )
     )
     co = result.scalar_one_or_none()
     if not co:
         raise HTTPException(status_code=404, detail="Change order not found")
 
+    was_approved = co.status == ChangeStatus.approved
     try:
         if body.status is not None:
             co.status = ChangeStatus(body.status)
@@ -751,9 +909,63 @@ async def update_change_order(
     if body.pct_complete is not None:
         co.pct_complete = Decimal(str(body.pct_complete))
 
+    # When transitioning to approved, apply qty scope impacts
+    now_approved = co.status == ChangeStatus.approved
+    if now_approved and not was_approved:
+        await _apply_qty_impacts(co, project_id, db)
+
     await db.commit()
     await db.refresh(co)
     return _co_to_out(co)
+
+
+async def _apply_qty_impacts(co: ChangeOrder, project_id: UUID, db: AsyncSession) -> None:
+    """Add qty_scope_impact from each change line to the matching account_qty_element row,
+    then recompute QAE pct_complete for each affected account."""
+    affected_accounts: set[UUID] = set()
+
+    for line in co.change_lines:
+        if not line.qty_element_id or not line.qty_scope_impact:
+            continue
+        # Find the account_qty_elements row for this account + element
+        aqe_result = await db.execute(
+            select(AccountQtyElement).where(
+                AccountQtyElement.cost_account_id == line.cost_account_id,
+                AccountQtyElement.qty_element_id == line.qty_element_id,
+            )
+        )
+        aqe = aqe_result.scalar_one_or_none()
+        if aqe is None:
+            continue
+        aqe.qty_scope = (aqe.qty_scope or Decimal("0")) + line.qty_scope_impact
+        affected_accounts.add(line.cost_account_id)
+
+    # Recompute QAE pct_complete for each affected account
+    for acc_id in affected_accounts:
+        await _recompute_qae_pct(acc_id, db)
+
+
+async def _recompute_qae_pct(account_id: UUID, db: AsyncSession) -> None:
+    """Recompute pct_complete for a QAE account from its account_qty_elements."""
+    aqe_rows_result = await db.execute(
+        select(AccountQtyElement).where(AccountQtyElement.cost_account_id == account_id)
+    )
+    rows = aqe_rows_result.scalars().all()
+    if not rows:
+        return
+
+    total_weight = sum(float(r.qty_weight or 0) for r in rows)
+    if total_weight == 0:
+        return
+
+    weighted_pct = sum(
+        float(r.qty_weight or 0) * (float(r.qty_actual or 0) / float(r.qty_eac or 1))
+        for r in rows
+    ) / total_weight
+
+    account = await db.get(CostAccount, account_id)
+    if account:
+        account.pct_complete = Decimal(str(round(weighted_pct, 6)))
 
 
 @router.get("/{project_id}/account-changes", response_model=list[WbsChangeItemOut])
@@ -896,3 +1108,133 @@ async def upsert_period_report(
     await db.commit()
     await db.refresh(row)
     return row
+
+
+# ---------------------------------------------------------------------------
+# Export
+# ---------------------------------------------------------------------------
+
+@router.get("/{project_id}/export/cost-report")
+async def export_cost_report(
+    project_id: UUID,
+    period: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    import io
+    import pandas as pd
+    from decimal import Decimal as _D
+    from fastapi.responses import StreamingResponse
+    from app.models.changes import ChangeLine as CL, ChangeOrder as CO
+
+    # 1. Accounts with WBS / CBS
+    acc_result = await db.execute(
+        select(CostAccount)
+        .where(CostAccount.project_id == project_id)
+        .options(
+            selectinload(CostAccount.wbs_node),
+            selectinload(CostAccount.cbs_node),
+        )
+        .order_by(CostAccount.account_code)
+    )
+    accounts = acc_result.scalars().all()
+    if not accounts:
+        raise HTTPException(status_code=404, detail="No accounts found")
+
+    account_ids = [a.id for a in accounts]
+
+    # 2. Pending / trend change-line deltas per account
+    chg_rows = await db.execute(
+        select(
+            CL.cost_account_id,
+            CO.status,
+            func.coalesce(func.sum(CL.cost_impact), 0).label("total"),
+        )
+        .join(CO, CO.id == CL.change_order_id)
+        .where(
+            CO.project_id == project_id,
+            CO.status.in_(["pending", "submitted", "trend"]),
+            CL.cost_account_id.in_(account_ids),
+        )
+        .group_by(CL.cost_account_id, CO.status)
+    )
+    chg_lookup: dict = {}
+    for acct_id, status, total in chg_rows.all():
+        chg_lookup.setdefault(acct_id, {})[status] = float(total)
+
+    # 3. Previous closed period snapshot EAC per account
+    prev_code = await db.scalar(
+        select(Period.code)
+        .where(
+            Period.project_id == project_id,
+            Period.is_closed == True,
+            Period.code < period,
+        )
+        .order_by(Period.code.desc())
+        .limit(1)
+    )
+    prev_snap: dict = {}
+    if prev_code:
+        prev_pid = await db.scalar(
+            select(Period.id).where(
+                Period.project_id == project_id,
+                Period.code == prev_code,
+            )
+        )
+        if prev_pid:
+            snap_rows = await db.execute(
+                select(CostAccountPeriod.cost_account_id, CostAccountPeriod.snap_cost_eac)
+                .where(
+                    CostAccountPeriod.period_id == prev_pid,
+                    CostAccountPeriod.cost_account_id.in_(account_ids),
+                    CostAccountPeriod.snap_cost_eac.isnot(None),
+                )
+            )
+            for acct_id, snap_eac in snap_rows.all():
+                prev_snap[acct_id] = float(snap_eac)
+
+    prev_label = f"EAC vs {prev_code}" if prev_code else "EAC vs Prev Period"
+
+    # 4. Build rows
+    data = []
+    for a in accounts:
+        chg = chg_lookup.get(a.id, {})
+        pending_delta = chg.get("pending", 0.0) + chg.get("submitted", 0.0)
+        trend_delta   = chg.get("trend", 0.0)
+
+        original = float(a.cost_bac_baseline or 0)
+        approved = float(a.cost_bac_approved or 0)
+        pending  = approved + pending_delta
+        eac      = float(a.cost_eac or 0)
+        prev_eac = prev_snap.get(a.id, eac)   # if no snapshot, delta = 0
+
+        data.append({
+            "WBS":                    a.wbs_node.code if a.wbs_node else "",
+            "CBS":                    a.cbs_node.code if a.cbs_node else "",
+            "Account Code":           a.account_code,
+            "Description":            a.description,
+            "Original Budget":        original,
+            "Approved Budget":        approved,
+            "Pending Budget":         pending,
+            "Growth - Approved":      approved - original,
+            "Growth - Pending":       pending_delta,
+            "Trends":                 trend_delta,
+            "Commitments":            float(a.cost_open_commit or 0),
+            "Actual Cost (AC)":       float(a.cost_actual or 0),
+            "Earned Cost (EV)":       float(a.cost_earned or 0),
+            "ETC Cost":               float(a.cost_etc or 0),
+            "EAC Cost":               eac,
+            "Variance (Appr - EAC)":  approved - eac,
+            prev_label:               eac - prev_eac,
+        })
+
+    df = pd.DataFrame(data)
+    buf = io.BytesIO()
+    df.to_excel(buf, index=False, sheet_name="Cost Report")
+    buf.seek(0)
+
+    filename = f"cost-report-{period}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

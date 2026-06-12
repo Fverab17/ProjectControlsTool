@@ -22,6 +22,7 @@ const inputSt: React.CSSProperties = {
   padding: '1px 5px', textAlign: 'right', background: 'var(--surface)',
   color: 'var(--ink-1)', outline: 'none',
 }
+const inputStLeft: React.CSSProperties = { ...inputSt, textAlign: 'left' }
 const iconBtn = (color?: string): React.CSSProperties => ({
   background: 'none', border: 'none', cursor: 'pointer',
   color: color ?? 'var(--ink-3)', padding: 2, display: 'flex', alignItems: 'center',
@@ -34,12 +35,13 @@ const headerBtn = (accent?: boolean): React.CSSProperties => ({
   border: accent ? 'none' : '1px solid var(--border)',
 })
 
+interface Draft { hours: string; cost: string; qty_elem: string; qty_impact: string }
+interface NewDraft { account_code: string; hours: string; cost: string; qty_elem: string; qty_impact: string }
+
 export function ChangeLinesGrid({ projectId, coId, lines }: Props) {
   const [isEditing, setIsEditing] = useState(false)
-  // map of lineId -> draft { hours, cost } strings
-  const [edits, setEdits] = useState<Record<string, { hours: string; cost: string }>>({})
-  // new-row draft, independent of edit mode
-  const [newRow, setNewRow] = useState<{ account_code: string; hours: string; cost: string } | null>(null)
+  const [edits, setEdits] = useState<Record<string, Draft>>({})
+  const [newRow, setNewRow] = useState<NewDraft | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const addLine    = useAddChangeLine(projectId, coId ?? '')
@@ -47,9 +49,14 @@ export function ChangeLinesGrid({ projectId, coId, lines }: Props) {
   const deleteLine = useDeleteChangeLine(projectId, coId ?? '')
 
   function enterEdit() {
-    const draft: Record<string, { hours: string; cost: string }> = {}
+    const draft: Record<string, Draft> = {}
     for (const l of lines) {
-      draft[l.id] = { hours: String(l.hour_impact), cost: String(l.cost_impact) }
+      draft[l.id] = {
+        hours: String(l.hour_impact),
+        cost: String(l.cost_impact),
+        qty_elem: l.qty_element_code ?? '',
+        qty_impact: l.qty_scope_impact != null ? String(l.qty_scope_impact) : '',
+      }
     }
     setEdits(draft)
     setError(null)
@@ -67,16 +74,25 @@ export function ChangeLinesGrid({ projectId, coId, lines }: Props) {
     try {
       const changed = lines.filter(l => {
         const e = edits[l.id]
-        return e && (parseFloat(e.hours) !== l.hour_impact || parseFloat(e.cost) !== l.cost_impact)
+        if (!e) return false
+        return (
+          parseFloat(e.hours) !== l.hour_impact ||
+          parseFloat(e.cost) !== l.cost_impact ||
+          e.qty_elem !== (l.qty_element_code ?? '') ||
+          (e.qty_impact !== '' ? parseFloat(e.qty_impact) : null) !== l.qty_scope_impact
+        )
       })
       await Promise.all(
-        changed.map(l =>
-          updateLine.mutateAsync({
+        changed.map(l => {
+          const e = edits[l.id]
+          return updateLine.mutateAsync({
             lineId: l.id,
-            hour_impact: parseFloat(edits[l.id].hours) || 0,
-            cost_impact: parseFloat(edits[l.id].cost) || 0,
+            hour_impact: parseFloat(e.hours) || 0,
+            cost_impact: parseFloat(e.cost) || 0,
+            qty_element_code: e.qty_elem || null,
+            qty_scope_impact: e.qty_impact !== '' ? parseFloat(e.qty_impact) : null,
           })
-        )
+        })
       )
       setIsEditing(false)
       setEdits({})
@@ -93,6 +109,8 @@ export function ChangeLinesGrid({ projectId, coId, lines }: Props) {
         account_code: newRow.account_code.trim().toUpperCase(),
         hour_impact: parseFloat(newRow.hours) || 0,
         cost_impact: parseFloat(newRow.cost) || 0,
+        qty_element_code: newRow.qty_elem || null,
+        qty_scope_impact: newRow.qty_impact !== '' ? parseFloat(newRow.qty_impact) : null,
       })
       setNewRow(null)
     } catch (e: unknown) {
@@ -109,7 +127,6 @@ export function ChangeLinesGrid({ projectId, coId, lines }: Props) {
     }
   }
 
-  // Live totals reflect in-progress edits and the unsaved new row
   const totalHours = lines.reduce((s, l) => {
     const e = edits[l.id]
     return s + (isEditing && e ? parseFloat(e.hours) || 0 : l.hour_impact)
@@ -121,7 +138,7 @@ export function ChangeLinesGrid({ projectId, coId, lines }: Props) {
   }, 0) + (newRow ? parseFloat(newRow.cost) || 0 : 0)
 
   const hasActionCol = isEditing || !!newRow
-  const colSpanLabel = 3  // #, Account ID, Description always span 3 for the total label
+  const totalCols = 7 + (hasActionCol ? 1 : 0) // #, Account, Desc, Hours, Cost, Element, Qty Impact [, Actions]
 
   return (
     <div
@@ -139,7 +156,7 @@ export function ChangeLinesGrid({ projectId, coId, lines }: Props) {
             <>
               <button
                 style={headerBtn()}
-                onClick={() => setNewRow({ account_code: '', hours: '0', cost: '0' })}
+                onClick={() => setNewRow({ account_code: '', hours: '0', cost: '0', qty_elem: '', qty_impact: '' })}
                 disabled={!!newRow || !coId}
               >
                 <Plus size={10} /> Add Row
@@ -159,7 +176,7 @@ export function ChangeLinesGrid({ projectId, coId, lines }: Props) {
             <>
               <button
                 style={headerBtn()}
-                onClick={() => { setNewRow({ account_code: '', hours: '0', cost: '0' }); setError(null) }}
+                onClick={() => { setNewRow({ account_code: '', hours: '0', cost: '0', qty_elem: '', qty_impact: '' }); setError(null) }}
                 disabled={!!newRow || !coId}
               >
                 <Plus size={10} /> Add
@@ -185,10 +202,12 @@ export function ChangeLinesGrid({ projectId, coId, lines }: Props) {
           <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
             <tr style={{ background: 'var(--surface-alt)', borderBottom: '1px solid var(--border-strong)' }}>
               <th style={{ ...thSt, width: 36 }}>#</th>
-              <th style={{ ...thSt, width: 120 }}>Account ID</th>
+              <th style={{ ...thSt, width: 110 }}>Account ID</th>
               <th style={thSt}>Description</th>
-              <th style={{ ...thSt, textAlign: 'right', width: 110 }}>Hours</th>
-              <th style={{ ...thSt, textAlign: 'right', width: 120 }}>Cost</th>
+              <th style={{ ...thSt, textAlign: 'right', width: 100 }}>Hours</th>
+              <th style={{ ...thSt, textAlign: 'right', width: 110 }}>Cost</th>
+              <th style={{ ...thSt, width: 80 }}>Element</th>
+              <th style={{ ...thSt, textAlign: 'right', width: 100 }}>Qty Impact</th>
               {hasActionCol && <th style={{ width: 52 }} />}
             </tr>
           </thead>
@@ -196,7 +215,7 @@ export function ChangeLinesGrid({ projectId, coId, lines }: Props) {
             {lines.length === 0 && !newRow ? (
               <tr>
                 <td
-                  colSpan={hasActionCol ? 6 : 5}
+                  colSpan={totalCols}
                   style={{ ...tdSt, color: 'var(--ink-muted)', textAlign: 'center', padding: '16px 10px' }}
                 >
                   No control accounts impacted
@@ -204,6 +223,7 @@ export function ChangeLinesGrid({ projectId, coId, lines }: Props) {
               </tr>
             ) : lines.map((line, i) => {
               const e = edits[line.id]
+              const cellPad = isEditing ? '3px 6px' : '5px 10px'
               return (
                 <tr key={line.id} style={{ borderBottom: '1px solid var(--border)' }}>
                   <td style={{ ...tdSt, color: 'var(--ink-3)' }}>{i + 1}</td>
@@ -211,17 +231,33 @@ export function ChangeLinesGrid({ projectId, coId, lines }: Props) {
                     {line.cost_account_code}
                   </td>
                   <td style={tdSt}>{line.cost_account_description}</td>
-                  <td className="num" style={{ ...tdSt, textAlign: 'right', padding: isEditing ? '3px 6px' : '5px 10px' }}>
+                  <td className="num" style={{ ...tdSt, textAlign: 'right', padding: cellPad }}>
                     {isEditing && e
                       ? <input type="number" value={e.hours} style={inputSt}
                           onChange={ev => setEdits(p => ({ ...p, [line.id]: { ...p[line.id], hours: ev.target.value } }))} />
                       : fmt(line.hour_impact)}
                   </td>
-                  <td className="num" style={{ ...tdSt, textAlign: 'right', fontWeight: 600, padding: isEditing ? '3px 6px' : '5px 10px' }}>
+                  <td className="num" style={{ ...tdSt, textAlign: 'right', fontWeight: 600, padding: cellPad }}>
                     {isEditing && e
                       ? <input type="number" value={e.cost} style={inputSt}
                           onChange={ev => setEdits(p => ({ ...p, [line.id]: { ...p[line.id], cost: ev.target.value } }))} />
                       : fmt(line.cost_impact)}
+                  </td>
+                  <td style={{ ...tdSt, padding: cellPad }}>
+                    {isEditing && e
+                      ? <input type="text" value={e.qty_elem} placeholder="QM3" style={inputStLeft}
+                          onChange={ev => setEdits(p => ({ ...p, [line.id]: { ...p[line.id], qty_elem: ev.target.value.toUpperCase() } }))} />
+                      : <span className="num" style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--accent)' }}>
+                          {line.qty_element_code ?? '—'}
+                        </span>}
+                  </td>
+                  <td className="num" style={{ ...tdSt, textAlign: 'right', padding: cellPad }}>
+                    {isEditing && e
+                      ? <input type="number" value={e.qty_impact} placeholder="0" style={inputSt}
+                          onChange={ev => setEdits(p => ({ ...p, [line.id]: { ...p[line.id], qty_impact: ev.target.value } }))} />
+                      : line.qty_scope_impact != null && line.qty_scope_impact !== 0
+                        ? <span>{line.qty_scope_impact > 0 ? '+' : ''}{line.qty_scope_impact} {line.qty_element_unit ?? ''}</span>
+                        : <span style={{ color: 'var(--ink-muted)' }}>—</span>}
                   </td>
                   {hasActionCol && (
                     <td style={{ padding: '3px 6px', textAlign: 'center' }}>
@@ -245,33 +281,33 @@ export function ChangeLinesGrid({ projectId, coId, lines }: Props) {
             {newRow && (
               <tr style={{ borderBottom: '1px solid var(--border)', background: '#FAFAF5' }}>
                 <td style={{ ...tdSt, color: 'var(--ink-3)' }}>{lines.length + 1}</td>
-                <td style={{ ...tdSt, padding: '3px 6px' }}>
+                <td style={{ padding: '3px 6px' }}>
                   <input
                     type="text"
                     autoFocus
                     placeholder="e.g. CA-31-SC"
                     value={newRow.account_code}
-                    style={{ ...inputSt, textAlign: 'left', width: '100%' }}
+                    style={inputStLeft}
                     onChange={e => setNewRow(p => p ? { ...p, account_code: e.target.value } : null)}
                     onKeyDown={e => { if (e.key === 'Enter') confirmAdd() }}
                   />
                 </td>
                 <td style={{ ...tdSt, color: 'var(--ink-muted)', fontSize: 10 }}>—</td>
                 <td style={{ padding: '3px 6px' }}>
-                  <input
-                    type="number"
-                    value={newRow.hours}
-                    style={inputSt}
-                    onChange={e => setNewRow(p => p ? { ...p, hours: e.target.value } : null)}
-                  />
+                  <input type="number" value={newRow.hours} style={inputSt}
+                    onChange={e => setNewRow(p => p ? { ...p, hours: e.target.value } : null)} />
                 </td>
                 <td style={{ padding: '3px 6px' }}>
-                  <input
-                    type="number"
-                    value={newRow.cost}
-                    style={inputSt}
-                    onChange={e => setNewRow(p => p ? { ...p, cost: e.target.value } : null)}
-                  />
+                  <input type="number" value={newRow.cost} style={inputSt}
+                    onChange={e => setNewRow(p => p ? { ...p, cost: e.target.value } : null)} />
+                </td>
+                <td style={{ padding: '3px 6px' }}>
+                  <input type="text" value={newRow.qty_elem} placeholder="QM3" style={inputStLeft}
+                    onChange={e => setNewRow(p => p ? { ...p, qty_elem: e.target.value.toUpperCase() } : null)} />
+                </td>
+                <td style={{ padding: '3px 6px' }}>
+                  <input type="number" value={newRow.qty_impact} placeholder="0" style={inputSt}
+                    onChange={e => setNewRow(p => p ? { ...p, qty_impact: e.target.value } : null)} />
                 </td>
                 <td style={{ padding: '3px 4px' }}>
                   <div style={{ display: 'flex', gap: 2 }}>
@@ -300,7 +336,7 @@ export function ChangeLinesGrid({ projectId, coId, lines }: Props) {
             <tfoot>
               <tr style={{ background: 'var(--surface-alt)', borderTop: '1px solid var(--border-strong)' }}>
                 <td
-                  colSpan={colSpanLabel}
+                  colSpan={3}
                   style={{ padding: '5px 10px', fontSize: 9.5, textTransform: 'uppercase', letterSpacing: '0.10em', color: 'var(--ink-3)' }}
                 >
                   Total ({lines.length} account{lines.length !== 1 ? 's' : ''})
@@ -311,7 +347,7 @@ export function ChangeLinesGrid({ projectId, coId, lines }: Props) {
                 <td className="num" style={{ padding: '5px 10px', textAlign: 'right', fontWeight: 600, fontSize: 11 }}>
                   {fmt(totalCost)}
                 </td>
-                {hasActionCol && <td />}
+                <td colSpan={2 + (hasActionCol ? 1 : 0)} />
               </tr>
             </tfoot>
           )}

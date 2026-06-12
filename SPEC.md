@@ -208,6 +208,19 @@ what's settled vs. still open.
   `GET /projects/:id/periods` so it reflects periods that actually exist in
   the DB (and respects `is_closed`). Deferred until the period management UI
   is built.
+- **Open:** Close-period workflow needs to snapshot quantity data. Currently
+  `cost_account_periods` has `qty_budget`, `qty_actual`, `qty_earned` columns
+  (period-level increments) but there is no cumulative qty snapshot (equivalent
+  of `snap_cost_actual_to_date` for quantities). The Quantities tab always shows
+  live `account_qty_elements.qty_actual` regardless of the selected period.
+  To fix: (a) add `snap_qty_actual` to `cost_account_periods`; (b) populate it
+  from `account_qty_elements.qty_actual` when `close_period()` runs; (c) read it
+  back in the Quantities tab when a closed period is selected. Also: the seed
+  marks periods `is_closed=True` directly but never runs `close_period()`, so
+  snapshot fields are all null — selecting a closed period in the training DB
+  shows zeros in the Data panel. Consider a seed step that calls `close_period()`
+  for the periods that should be closed.
+
 - **Settled:** Period-close snapshot approach for historical EVM views.
   `cost_account_periods` stores five snapshot columns (`snap_pct_complete`,
   `snap_cost_earned`, `snap_cost_actual_to_date`, `snap_cost_etc`,

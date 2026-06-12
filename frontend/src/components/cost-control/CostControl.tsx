@@ -8,6 +8,8 @@ import { WbsNavPanel } from './WbsNavPanel'
 import { AccountDataPanel } from './AccountDataPanel'
 import { AccountDetailTabs } from './AccountDetailTabs'
 import { ImportModal } from './ImportModal'
+import { ImportAccountsModal } from './ImportAccountsModal'
+import { ExportModal } from './ExportModal'
 import { useLocalState } from '../../hooks/useLocalState'
 
 interface Props { projectId: string; period: string }
@@ -22,6 +24,8 @@ export function CostControl({ projectId, period }: Props) {
   const [bottomTab, setBottomTab] = useState('groups')
   const [search, setSearch] = useState('')
   const [showImport, setShowImport] = useState(false)
+  const [showImportAccounts, setShowImportAccounts] = useState(false)
+  const [showExport, setShowExport] = useState(false)
   const [dataPanelHeight, setDataPanelHeight] = useLocalState('cpm:cost-control:data-panel-height', 300)
 
   function handleDragStart(e: React.MouseEvent) {
@@ -47,7 +51,11 @@ export function CostControl({ projectId, period }: Props) {
     return rows.filter(row => {
       // While searching: bypass expand/collapse and match code or description
       if (q) {
-        return row.code.toLowerCase().includes(q) || row.description.toLowerCase().includes(q)
+        return (
+          row.code.toLowerCase().includes(q) ||
+          row.description.toLowerCase().includes(q) ||
+          (row.account_code?.toLowerCase().includes(q) ?? false)
+        )
       }
       // Normal mode: respect expand/collapse hierarchy
       if (row.parent_code) {
@@ -95,6 +103,8 @@ export function CostControl({ projectId, period }: Props) {
         periodIsClosed={data?.period_is_closed ?? false}
         onPeriodClosed={() => queryClient.invalidateQueries({ queryKey: ['cost-control', projectId, period] })}
         onImport={() => setShowImport(true)}
+        onImportAccounts={() => setShowImportAccounts(true)}
+        onExport={() => setShowExport(true)}
       />
       {showImport && (
         <ImportModal
@@ -102,6 +112,20 @@ export function CostControl({ projectId, period }: Props) {
           projectId={projectId}
           onClose={() => setShowImport(false)}
           onImported={() => queryClient.invalidateQueries({ queryKey: ['cost-control', projectId, period] })}
+        />
+      )}
+      {showImportAccounts && (
+        <ImportAccountsModal
+          projectId={projectId}
+          onClose={() => setShowImportAccounts(false)}
+          onImported={() => queryClient.invalidateQueries({ queryKey: ['cost-control', projectId, period] })}
+        />
+      )}
+      {showExport && (
+        <ExportModal
+          period={period}
+          projectId={projectId}
+          onClose={() => setShowExport(false)}
         />
       )}
       <CostControlTabBar />
@@ -135,7 +159,7 @@ export function CostControl({ projectId, period }: Props) {
               borderBottom: '1px solid var(--border)',
             }}
           />
-          <AccountDetailTabs projectId={projectId} row={selectedRow} tab={bottomTab} setTab={setBottomTab} />
+          <AccountDetailTabs projectId={projectId} row={selectedRow} tab={bottomTab} setTab={setBottomTab} onAccountUpdated={() => queryClient.invalidateQueries({ queryKey: ['cost-control', projectId] })} />
         </div>
       </div>
     </div>

@@ -1,8 +1,17 @@
-import type { WbsRow } from '../../types/cost-control'
-import { fmt } from '../../lib/fmt'
+import { useState, useEffect } from 'react'
+import type { WbsRow, AccountQtyElement } from '../../types/cost-control'
+import { PCT_METHOD_LABELS } from '../../types/cost-control'
+import { fmt, pctFmt } from '../../lib/fmt'
+import { API_BASE } from '../../lib/api'
 import { useAccountChanges, useWbsChanges } from '../../hooks/useChangeOrders'
 
-interface Props { projectId: string; row: WbsRow | null; tab: string; setTab: (t: string) => void }
+interface Props {
+  projectId: string
+  row: WbsRow | null
+  tab: string
+  setTab: (t: string) => void
+  onAccountUpdated?: () => void
+}
 
 const TABS = [
   { id: 'groups',      label: 'Groups / Breakdown Structures' },
@@ -10,9 +19,10 @@ const TABS = [
   { id: 'budget',      label: 'Budget Details' },
   { id: 'changes',     label: 'Changes' },
   { id: 'commitments', label: 'Commitments' },
+  { id: 'quantities',  label: 'Quantities' },
 ]
 
-export function AccountDetailTabs({ projectId, row, tab, setTab }: Props) {
+export function AccountDetailTabs({ projectId, row, tab, setTab, onAccountUpdated }: Props) {
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <div
@@ -46,6 +56,7 @@ export function AccountDetailTabs({ projectId, row, tab, setTab }: Props) {
           : tab === 'budget' ? <BudgetTab row={row} />
           : tab === 'changes' ? <ChangesTab projectId={projectId} row={row} />
           : tab === 'commitments' ? <CommitmentsTab row={row} />
+          : tab === 'quantities'  ? <QuantitiesTab projectId={projectId} row={row} onAccountUpdated={onAccountUpdated} />
           : null}
       </div>
     </div>
@@ -222,6 +233,147 @@ function CommitmentsTab({ row }: { row: WbsRow }) {
     ['CTR-0201','KBR Construction','1','2023-01',fmt(row.cost_budget * 0.15),'Pending'],
   ]
   return <TabTable headers={['Contract','Vendor','Item','Period','Cost','Status']} rows={rows} rightCols={[4]} />
+}
+
+// ── Quantities tab ───────────────────────────────────────────────────────────
+
+function QuantitiesTab({ projectId, row, onAccountUpdated }: { projectId: string; row: WbsRow; onAccountUpdated?: () => void }) {
+  const isQae = row.pct_complete_method === 'qae'
+  const accountId = row.account_code ? row.wbs_node_id : null
+
+  const [elements, setElements] = useState<AccountQtyElement[]>([])
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState<Record<string, boolean>>({})
+
+  useEffect(() => {
+    if (!accountId) { setElements([]); return }
+    fetch(`${API_BASE}/projects/${projectId}/cost-accounts/${accountId}/qty-elements`)
+      .then(r => r.json())
+      .then((data: AccountQtyElement[]) => {
+        setElements(data)
+        const d: Record<string, string> = {}
+        data.forEach(e => { d[e.id] = String(e.qty_actual) })
+        setDrafts(d)
+      })
+      .catch(() => setElements([]))
+  }, [accountId, projectId])
+
+  async function save(el: AccountQtyElement, field: 'qty_actual' | 'qty_eac', raw: string) {
+    const val = parseFloat(raw)
+    if (isNaN(val) || val === el[field]) return
+    setSaving(s => ({ ...s, [el.id + field]: true }))
+    try {
+      const res = await fetch(
+        `${API_BASE}/projects/${projectId}/cost-accounts/${accountId}/qty-elements/${el.id}`,
+        { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [field]: val }) }
+      )
+      if (res.ok) {
+        const updated: AccountQtyElement = await res.json()
+        setElements(prev => prev.map(e => e.id === el.id ? updated : e))
+        setDrafts(d => ({ ...d, [el.id]: String(updated.qty_actual), [el.id + '_eac']: String(updated.qty_eac) }))
+        onAccountUpdated?.()
+      }
+    } finally {
+      setSaving(s => ({ ...s, [el.id + field]: false }))
+    }
+  }
+
+  if (!accountId) {
+    return <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>Select a control account to view quantities.</div>
+  }
+
+  if (!isQae) {
+    const methodLabel = row.pct_complete_method
+      ? (PCT_METHOD_LABELS[row.pct_complete_method as keyof typeof PCT_METHOD_LABELS] ?? row.pct_complete_method)
+      : 'Manual'
+    return (
+      <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+        This account uses <strong>{methodLabel}</strong> progress method — no quantity elements assigned.
+      </div>
+    )
+  }
+
+  if (elements.length === 0) {
+    return <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>No quantity elements assigned to this account.</div>
+  }
+
+  const totalWeight = elements.reduce((s, e) => s + e.qty_weight, 0)
+  const weightedPct = totalWeight > 0
+    ? elements.reduce((s, e) => s + e.qty_weight * e.pct_complete, 0) / totalWeight
+    : 0
+
+  const thSt: React.CSSProperties = { padding: '5px 10px', fontSize: 9.5, letterSpacing: '0.10em', textTransform: 'uppercase', color: 'var(--ink-3)', whiteSpace: 'nowrap' }
+  const inputSt = (busy: boolean): React.CSSProperties => ({
+    width: 100, textAlign: 'right', fontFamily: '"IBM Plex Mono", monospace',
+    fontSize: 11, padding: '2px 6px', border: '1px solid var(--accent)',
+    borderRadius: 2, background: 'var(--surface)',
+    color: busy ? 'var(--ink-muted)' : 'var(--ink-1)',
+  })
+
+  return (
+    <div>
+      <div style={{ fontSize: 10, color: 'var(--ink-muted)', marginBottom: 8 }}>
+        Progress method: <strong style={{ color: 'var(--accent)' }}>QAE — Quantity-Actual/EAC</strong>
+        &nbsp;&middot;&nbsp;% = Σ(weight × actual ÷ eac) ÷ Σ(weight)
+        &nbsp;&middot;&nbsp;Edit <em>Actual</em> or <em>EAC</em> cells and press Enter or Tab to save.
+      </div>
+      <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 11 }}>
+        <thead>
+          <tr style={{ background: 'var(--surface-alt)', borderBottom: '1px solid var(--border-strong)' }}>
+            {(['Element', 'Description', 'Unit', 'Weight', 'Scope (BAC)', 'Actual ✎', 'EAC ✎', '% Complete'] as const).map((h, i) => (
+              <th key={h} style={{ ...thSt, textAlign: i >= 3 ? 'right' : 'left' }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {elements.map((el, i) => {
+            const actBusy = !!saving[el.id + 'qty_actual']
+            const eacBusy = !!saving[el.id + 'qty_eac']
+            return (
+              <tr key={el.id} style={{ borderBottom: i < elements.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                <td style={{ padding: '5px 10px', fontFamily: '"IBM Plex Mono", monospace', fontWeight: 600, color: 'var(--accent)' }}>{el.code}</td>
+                <td style={{ padding: '5px 10px', color: 'var(--ink-2)' }}>{el.description}</td>
+                <td style={{ padding: '5px 10px', fontFamily: '"IBM Plex Mono", monospace', color: 'var(--ink-3)' }}>{el.unit}</td>
+                <td className="num" style={{ padding: '5px 10px', textAlign: 'right' }}>{(el.qty_weight * 100).toFixed(0)}%</td>
+                <td className="num" style={{ padding: '5px 10px', textAlign: 'right' }}>{el.qty_scope.toLocaleString(undefined, { maximumFractionDigits: 1 })}</td>
+                <td style={{ padding: '3px 6px', textAlign: 'right' }}>
+                  <input
+                    type="number" disabled={actBusy}
+                    value={drafts[el.id] ?? el.qty_actual}
+                    onChange={e => setDrafts(d => ({ ...d, [el.id]: e.target.value }))}
+                    onBlur={() => save(el, 'qty_actual', drafts[el.id] ?? String(el.qty_actual))}
+                    onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                    style={inputSt(actBusy)}
+                  />
+                </td>
+                <td style={{ padding: '3px 6px', textAlign: 'right' }}>
+                  <input
+                    type="number" disabled={eacBusy}
+                    value={drafts[el.id + '_eac'] ?? el.qty_eac}
+                    onChange={e => setDrafts(d => ({ ...d, [el.id + '_eac']: e.target.value }))}
+                    onBlur={() => save(el, 'qty_eac', drafts[el.id + '_eac'] ?? String(el.qty_eac))}
+                    onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                    style={inputSt(eacBusy)}
+                  />
+                </td>
+                <td className="num" style={{ padding: '5px 10px', textAlign: 'right', fontWeight: 600, color: 'var(--accent)' }}>{pctFmt(el.pct_complete)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+        {elements.length > 1 && (
+          <tfoot>
+            <tr style={{ background: 'var(--surface-alt)', borderTop: '1px solid var(--border-strong)' }}>
+              <td colSpan={3} style={{ padding: '5px 10px', fontSize: 9.5, textTransform: 'uppercase', letterSpacing: '0.10em', color: 'var(--ink-3)' }}>Weighted Average</td>
+              <td className="num" style={{ padding: '5px 10px', textAlign: 'right', fontWeight: 600 }}>100%</td>
+              <td colSpan={3} />
+              <td className="num" style={{ padding: '5px 10px', textAlign: 'right', fontWeight: 700, color: 'var(--accent)' }}>{pctFmt(weightedPct)}</td>
+            </tr>
+          </tfoot>
+        )}
+      </table>
+    </div>
+  )
 }
 
 // ── Shared table component ───────────────────────────────────────────────────

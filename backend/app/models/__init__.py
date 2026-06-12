@@ -12,7 +12,7 @@ from app.models.enums import (
 )
 from app.models.users import Project, ProjectMember, User
 from app.models.breakdown import CbsNode, CurrencyRate, Curve, Period, PeriodReport, WbsNode
-from app.models.cost import BudgetLine, CostAccount, CostAccountPeriod
+from app.models.cost import AccountQtyElement, BudgetLine, CostAccount, CostAccountPeriod, QtyElement
 from app.models.procurement import Commitment, Contract, ContractLine, Invoice, InvoiceLine, Vendor
 from app.models.changes import ChangeLine, ChangeOrder
 
@@ -22,7 +22,7 @@ __all__ = [
     "PriceType", "CurveType",
     "User", "Project", "ProjectMember",
     "WbsNode", "CbsNode", "Period", "PeriodReport", "CurrencyRate", "Curve",
-    "CostAccount", "CostAccountPeriod", "BudgetLine",
+    "CostAccount", "CostAccountPeriod", "BudgetLine", "QtyElement", "AccountQtyElement",
     "Vendor", "Contract", "ContractLine", "Commitment", "Invoice", "InvoiceLine",
     "ChangeOrder", "ChangeLine",
 ]

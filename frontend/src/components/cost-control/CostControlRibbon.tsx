@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  ArrowUpDown, Calculator, CheckCircle, Download,
+  ArrowUpDown, Calculator, CheckCircle, ClipboardList, Download,
   FileBarChart, Filter, FolderInput, Lock, LockOpen, Plus, Settings2, TrendingUp, Trash2,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -12,6 +12,8 @@ interface Props {
   periodIsClosed: boolean
   onPeriodClosed: () => void
   onImport: () => void
+  onImportAccounts: () => void
+  onExport: () => void
 }
 
 interface RibbonBtn { icon: LucideIcon; label: string; onClick?: () => void; disabled?: boolean }
@@ -23,7 +25,7 @@ const btnSt = (disabled?: boolean): React.CSSProperties => ({
   cursor: disabled ? 'default' : 'pointer',
 })
 
-export function CostControlRibbon({ period, projectId, periodIsClosed, onPeriodClosed, onImport }: Props) {
+export function CostControlRibbon({ period, projectId, periodIsClosed, onPeriodClosed, onImport, onImportAccounts, onExport }: Props) {
   const [showConfirm, setShowConfirm] = useState(false)
   const [closing, setClosing] = useState(false)
   const [justClosed, setJustClosed] = useState(false)
@@ -69,7 +71,8 @@ export function CostControlRibbon({ period, projectId, periodIsClosed, onPeriodC
         { icon: Plus,         label: 'Add' },
         { icon: Trash2,       label: 'Delete' },
         { icon: Settings2,    label: 'Settings' },
-        { icon: FolderInput,  label: 'Import', onClick: onImport },
+        { icon: FolderInput,    label: 'Import',           onClick: onImport },
+        { icon: ClipboardList,  label: 'Import\nAccounts', onClick: onImportAccounts },
       ],
     },
     {
@@ -84,7 +87,7 @@ export function CostControlRibbon({ period, projectId, periodIsClosed, onPeriodC
       label: 'Reports',
       items: [
         { icon: FileBarChart, label: 'Reports' },
-        { icon: Download,     label: 'Export' },
+        { icon: Download,     label: 'Export', onClick: onExport },
         { icon: Filter,       label: 'Filter' },
       ],
     },

@@ -97,9 +97,25 @@ export function useUpdateChangeOrder(projectId: string, coId: string) {
   })
 }
 
+export interface AddChangeLineArgs {
+  account_code: string
+  hour_impact: number
+  cost_impact: number
+  qty_element_code?: string | null
+  qty_scope_impact?: number | null
+}
+
+export interface UpdateChangeLineArgs {
+  lineId: string
+  hour_impact: number
+  cost_impact: number
+  qty_element_code?: string | null
+  qty_scope_impact?: number | null
+}
+
 export function useAddChangeLine(projectId: string, coId: string) {
   const qc = useQueryClient()
-  return useMutation<ChangeLine, Error, { account_code: string; hour_impact: number; cost_impact: number }>({
+  return useMutation<ChangeLine, Error, AddChangeLineArgs>({
     mutationFn: async (body) => {
       const r = await fetch(`${API_BASE}/projects/${projectId}/change-orders/${coId}/lines`, {
         method: 'POST',
@@ -121,12 +137,12 @@ export function useAddChangeLine(projectId: string, coId: string) {
 
 export function useUpdateChangeLine(projectId: string, coId: string) {
   const qc = useQueryClient()
-  return useMutation<ChangeLine, Error, { lineId: string; hour_impact: number; cost_impact: number }>({
-    mutationFn: async ({ lineId, hour_impact, cost_impact }) => {
+  return useMutation<ChangeLine, Error, UpdateChangeLineArgs>({
+    mutationFn: async ({ lineId, hour_impact, cost_impact, qty_element_code, qty_scope_impact }) => {
       const r = await fetch(`${API_BASE}/projects/${projectId}/change-orders/${coId}/lines/${lineId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hour_impact, cost_impact }),
+        body: JSON.stringify({ hour_impact, cost_impact, qty_element_code, qty_scope_impact }),
       })
       if (!r.ok) throw new Error('Failed to update line')
       return r.json()

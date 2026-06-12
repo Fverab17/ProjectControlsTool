@@ -65,7 +65,11 @@ class ContractLine(Base):
     contract_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
     item_no: Mapped[int] = mapped_column(Integer, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
-    quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0"))
+    qty_element_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("qty_elements.id"))
+    quantity_unit: Mapped[str | None] = mapped_column(Text)
+    qty_committed: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0"))   # contracted scope quantity
+    qty_installed: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0"))   # delivered / installed to date
+    price_per_unit: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0"))  # unit rate (cost / qty_committed)
     hours: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
     cost: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
 
@@ -115,6 +119,8 @@ class InvoiceLine(Base):
     invoice_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False)
     cost_account_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("cost_accounts.id"), nullable=False, index=True)
     period_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("periods.id"), nullable=False, index=True)
+    qty_element_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("qty_elements.id"))
+    quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0"))   # quantity invoiced this invoice
     hours: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
     cost: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
     x_cost: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))

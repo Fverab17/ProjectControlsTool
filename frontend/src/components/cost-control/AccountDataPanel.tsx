@@ -1,7 +1,39 @@
 import { useState } from 'react'
 import type { WbsRow, EtcMethod } from '../../types/cost-control'
-import { ETC_METHOD_LABELS, ETC_METHOD_FORMULA } from '../../types/cost-control'
+import { ETC_METHOD_LABELS, ETC_METHOD_FORMULA, PCT_METHOD_LABELS } from '../../types/cost-control'
 import { fmt, pctFmt } from '../../lib/fmt'
+import { API_BASE } from '../../lib/api'
+
+// ---------------------------------------------------------------------------
+// Mock package lookup — derives package assignment from WBS code until the
+// packages API populates package_code / package_description on WbsRow
+// ---------------------------------------------------------------------------
+function derivePackage(wbsCode: string): { code: string; description: string } | null {
+  const segs = wbsCode.split('.')
+  const s0 = segs[0]
+  const s1 = segs.slice(0, 2).join('.')
+  if (s0 === '1') return { code: 'P1',    description: 'PMT' }
+  if (s0 === '2') {
+    if (s1 === '2.1') return { code: 'P2.01', description: 'Process Engineering Package' }
+    if (s1 === '2.2') return { code: 'P2.02', description: 'Civil & Structural Package' }
+    if (s1 === '2.3') return { code: 'P2.03', description: 'Mechanical Engineering Package' }
+    if (s1 === '2.4') return { code: 'P2.04', description: 'Electrical Engineering Package' }
+    if (s1 === '2.5') return { code: 'P2.05', description: 'I&C Engineering Package' }
+    return { code: 'P2', description: 'Engineering & Design' }
+  }
+  if (s0 === '3') return { code: 'P3',    description: 'Procurement' }
+  if (s0 === '4') {
+    if (s1 === '4.1') return { code: 'P4.01', description: 'Civil & Foundation Package' }
+    if (s1 === '4.2') return { code: 'P4.02', description: 'Structural Steel Package' }
+    if (s1 === '4.3') return { code: 'P4.03', description: 'Mechanical Installation Package' }
+    if (s1 === '4.4') return { code: 'P4.04', description: 'Electrical & I&C Package' }
+    if (s1 === '4.5') return { code: 'P4.05', description: 'Commissioning Package' }
+    return { code: 'P4', description: 'Construction' }
+  }
+  if (s0 === '5') return { code: 'P4.05', description: 'Commissioning Package' }
+  if (s0 === '6') return { code: 'P5',    description: 'Allowances & Contingencies' }
+  return null
+}
 
 interface Props {
   row: WbsRow | null
@@ -36,17 +68,22 @@ export function AccountDataPanel({ row, period, projectId, height, onAccountUpda
   // Capture non-null row for use inside async callbacks
   const account = row
   const isAccount = !!account.account_code
+
+  // Package: use API field when available, fall back to derived mock
+  const pkg = account.package_code
+    ? { code: account.package_code, description: account.package_description ?? '' }
+    : derivePackage(account.code)
   const etcMethod = (account.etc_method ?? 'manual') as EtcMethod
 
-  const baselineBudget  = account.cost_budget * 0.92
-  const approvedChanges = account.cost_budget * 0.08
+  const approvedChanges = account.cost_approved_changes ?? 0
+  const baselineBudget  = account.cost_budget - approvedChanges
   const periodIncurred  = account.cost_period_incurred
 
   async function handleEtcMethodChange(method: EtcMethod) {
     if (!isAccount) return
     setSaving(true)
     try {
-      await fetch(`/api/projects/${projectId}/cost-accounts/${account.wbs_node_id}`, {
+      await fetch(`${API_BASE}/projects/${projectId}/cost-accounts/${account.wbs_node_id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ etc_method: method }),
@@ -137,6 +174,24 @@ export function AccountDataPanel({ row, period, projectId, height, onAccountUpda
               <div style={monoField}>{val}</div>
             </div>
           ))}
+
+          {/* Package */}
+          {pkg && (
+            <div style={{ flex: 2 }}>
+              <div style={labelSt}>Package</div>
+              <div style={{ ...fieldSt, gap: 6 }}>
+                <span
+                  className="num"
+                  style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-soft)', padding: '1px 6px', borderRadius: 2, flexShrink: 0 }}
+                >
+                  {pkg.code}
+                </span>
+                <span style={{ fontSize: 11, color: 'var(--ink-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {pkg.description}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Control Account Totals */}
@@ -177,14 +232,14 @@ export function AccountDataPanel({ row, period, projectId, height, onAccountUpda
           <div style={{ flexShrink: 0, width: 150 }}>
             <div style={sectionHeader}>Percent Complete</div>
             <div style={{ border: '1px solid var(--border-strong)', borderTop: 'none', borderRadius: '0 0 2px 2px', padding: '6px 8px' }}>
-              {[
+              {([
                 ['Current',  pctFmt(account.pct_complete), 'var(--accent)'],
                 ['Previous', pctFmt(Math.max(0, account.pct_complete - 0.04)), null],
-                ['Method',   'Manual', null],
-              ].map(([k, v, color]) => (
-                <div key={k as string} className="flex justify-between items-center py-0.5">
+                ['Method',   PCT_METHOD_LABELS[account.pct_complete_method as keyof typeof PCT_METHOD_LABELS] ?? account.pct_complete_method ?? 'Manual', null],
+              ] as [string, string, string | null][]).map(([k, v, color]) => (
+                <div key={k} className="flex justify-between items-center py-0.5">
                   <span style={{ fontSize: 9.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{k}</span>
-                  <span className="num" style={{ fontSize: 11, fontWeight: k === 'Current' ? 600 : 400, color: (color as string) ?? 'var(--ink-1)' }}>{v}</span>
+                  <span className="num" style={{ fontSize: 11, fontWeight: k === 'Current' ? 600 : 400, color: color ?? 'var(--ink-1)' }}>{v}</span>
                 </div>
               ))}
             </div>

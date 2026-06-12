@@ -14,9 +14,9 @@ from sqlalchemy import select
 
 from app.db import AsyncSessionLocal
 from app.models import (
-    BudgetLine, CbsNode, ChangeLine, ChangeOrder, CostAccount,
+    AccountQtyElement, BudgetLine, CbsNode, ChangeLine, ChangeOrder, CostAccount,
     CostAccountPeriod, Contract, Commitment, Curve, Period, Project,
-    ProjectMember, User, Vendor, WbsNode,
+    ProjectMember, QtyElement, User, Vendor, WbsNode,
 )
 from app.models.enums import (
     ChangeCategory, ChangeImpact, ChangeReason, ChangeStatus, ContractStatus, CurveType,
@@ -63,10 +63,16 @@ async def seed_all(db) -> None:
     print("Creating curves...")
     curves = await create_curves(db, project)
 
+    print("Creating qty elements...")
+    qty_elements = await create_qty_elements(db, project)
+
     print("Creating cost accounts...")
     accounts = await create_cost_accounts(db, project, wbs, cbs, curves)
 
     print(f"  → {len(accounts)} accounts created")
+
+    print("Assigning qty elements to accounts...")
+    await create_account_qty_elements(db, accounts, qty_elements)
 
     print("Creating time-phased period data...")
     await create_account_periods(db, accounts, periods)
@@ -79,10 +85,13 @@ async def seed_all(db) -> None:
     await create_commitments(db, contracts, accounts, periods)
 
     print("Creating change orders...")
-    await create_change_orders(db, project, accounts, periods)
+    await create_change_orders(db, project, accounts, periods, qty_elements)
+
+    print("Fixing BAC baseline fields from approved COs...")
+    await fix_bac_baselines(db, project, accounts)
 
     print("Creating budget lines...")
-    await create_budget_lines(db, accounts)
+    await create_budget_lines(db, accounts, qty_elements)
 
 
 # ---------------------------------------------------------------------------
@@ -440,8 +449,113 @@ ACCOUNT_TEMPLATES = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Quantity elements — project-level catalogue
+# ---------------------------------------------------------------------------
+
+QTY_ELEMENTS_DATA = [
+    # (code, description, unit, sort_order)
+    ("QM3", "Concrete Volume",  "m3", 0),
+    ("QT",  "Structural Mass",  "t",  1),
+    ("QM",  "Pipe Length",      "m",  2),
+    ("QEA", "Count / Items",    "ea", 3),
+    ("QM2", "Area",             "m2", 4),
+]
+
+# Maps account_code → list of (element_code, qty_scope, qty_weight_str, approx_unit_cost)
+# Only construction/equipment accounts get qty elements — teaching focus for QAE method.
+# Multi-element rows illustrate the weighted QAE formula (e.g. CA-31-SC has two elements).
+ACCOUNT_QTY_MAP: dict[str, list[tuple[str, float, str, float]]] = {
+    "CA-31-SC":  [("QM3",  8_000.0, "0.70",  660.0), ("QM2", 22_000.0, "0.30", 102.0)],
+    "CA-31-LC":  [("QM3",  8_000.0, "1.00",  412.0)],
+    "CA-32-SC":  [("QT",   2_800.0, "1.00", 2_060.0)],
+    "CA-32-LC":  [("QT",   2_800.0, "1.00", 1_115.0)],
+    "CA-33-SC":  [("QEA",    180.0, "0.60", 56_000.0), ("QT", 850.0, "0.40", 7_900.0)],
+    "CA-33-LC":  [("QEA",    180.0, "1.00", 54_500.0)],
+    "CA-34-SC":  [("QM",  22_000.0, "1.00",   570.0)],
+    "CA-34-LC":  [("QM",  22_000.0, "1.00",   295.0)],
+    "CA-35-SC":  [("QEA",  1_800.0, "1.00", 4_335.0)],
+    "CA-36-SC":  [("QM2", 42_000.0, "1.00",    49.0)],
+    "CA-211-ME": [("QEA",     45.0, "1.00", 567_000.0)],
+    "CA-212-ME": [("QEA",     62.0, "1.00", 343_000.0)],
+    "CA-222-MB": [("QT",   3_200.0, "1.00", 2_050.0)],
+}
+
+# Account code prefix → WBS code, used to look up WBS_PCT / WBS_CPI for qty actuals
+_ACC_WBS: dict[str, str] = {
+    "CA-31":  "3.1",  "CA-32": "3.2",  "CA-33": "3.3",
+    "CA-34":  "3.4",  "CA-35": "3.5",  "CA-36": "3.6",
+    "CA-211": "2.1.1", "CA-212": "2.1.2", "CA-222": "2.2.2",
+}
+
+
 def d(value: float) -> Decimal:
     return Decimal(str(round(value, 2)))
+
+
+# ---------------------------------------------------------------------------
+# Qty element catalogue
+# ---------------------------------------------------------------------------
+
+async def create_qty_elements(db, project) -> dict[str, QtyElement]:
+    elems: dict[str, QtyElement] = {}
+    for code, desc, unit, sort in QTY_ELEMENTS_DATA:
+        e = QtyElement(
+            project_id=project.id,
+            code=code,
+            description=desc,
+            unit=unit,
+            sort_order=sort,
+        )
+        db.add(e)
+        elems[code] = e
+    await db.flush()
+    return elems
+
+
+async def create_account_qty_elements(db, accounts, qty_elements: dict) -> None:
+    acc_map = {a.account_code: a for a in accounts}
+
+    for acc_code, assignments in ACCOUNT_QTY_MAP.items():
+        acc = acc_map.get(acc_code)
+        if not acc:
+            continue
+
+        # Resolve WBS pct/cpi for realistic qty_actual / qty_eac
+        wbs_code = next((w for pfx, w in _ACC_WBS.items() if acc_code.startswith(pfx + "-")), None)
+        pct = WBS_PCT.get(wbs_code, 0.5) if wbs_code else 0.5
+        cpi = WBS_CPI.get(wbs_code, 0.95) if wbs_code else 0.95
+
+        for elem_code, scope, weight_str, _unit_cost in assignments:
+            elem = qty_elements.get(elem_code)
+            if not elem:
+                continue
+            qty_actual = scope * pct
+            # EAC: physical qty rarely overruns proportionally — apply only 30% of cost variance
+            qty_eac = scope * (1.0 + max(0.0, 1.0 / cpi - 1.0) * 0.3)
+
+            db.add(AccountQtyElement(
+                cost_account_id=acc.id,
+                qty_element_id=elem.id,
+                qty_scope=Decimal(str(round(scope, 4))),
+                qty_actual=Decimal(str(round(qty_actual, 4))),
+                qty_eac=Decimal(str(round(qty_eac, 4))),
+                qty_weight=Decimal(weight_str),
+            ))
+
+        # Recompute pct_complete from QAE formula so it matches the qty data
+        total_w = sum(Decimal(w) for _, _, w, _ in assignments)
+        if total_w > 0:
+            weighted = sum(
+                Decimal(w) * (Decimal(str(round(scope * pct, 4))) / Decimal(str(round(scope * (1.0 + max(0.0, 1.0 / cpi - 1.0) * 0.3), 4))))
+                for _, scope, w, _ in assignments
+                if scope > 0
+            )
+            acc.pct_complete = (weighted / total_w).quantize(Decimal("0.0001"))
+
+        acc.pct_complete_method = PctMethod.qae
+
+    await db.flush()
 
 
 async def create_cost_accounts(db, project, wbs, cbs, curves):
@@ -484,10 +598,10 @@ async def create_cost_accounts(db, project, wbs, cbs, curves):
                 cost_open_commit=d(open_commit),
                 cost_etc=d(etc),
                 cost_eac=d(eac),
-                cost_bac_baseline=d(budget * 0.92),
-                cost_bac_approved=d(budget * 0.96),
+                cost_bac_baseline=d(budget),
+                cost_bac_approved=d(budget),
                 cost_bac_control=d(budget),
-                cost_bac_changes=d(budget * 0.04),
+                cost_bac_changes=d(0),
                 hour_budget=d(budget * 0.028),
                 hour_earned=d(earned * 0.028),
                 hour_actual=d(actual * 0.028),
@@ -528,10 +642,16 @@ async def create_account_periods(db, accounts, periods):
         filled = max(1, int(n * pct * 0.85))
         filled_w = sum(weights[:filled]) or 1
 
+        # Total qty scope for this account (sum across all elements for rollup columns)
+        qty_scope_total = sum(scope for _, scope, _, _ in ACCOUNT_QTY_MAP.get(acc.account_code, []))
+
         for i, (period, w) in enumerate(zip(periods, weights)):
             pb = round(budget * w, 2)
             pa = round(actual_total * weights[i] / filled_w, 2) if i < filled else 0.0
             pe = round(earned_total * weights[i] / filled_w, 2) if i < filled else 0.0
+
+            qb = Decimal(str(round(qty_scope_total * w, 4))) if qty_scope_total else None
+            qa = Decimal(str(round(qty_scope_total * pct * weights[i] / filled_w, 4))) if (qty_scope_total and i < filled) else None
 
             db.add(CostAccountPeriod(
                 cost_account_id=acc.id,
@@ -544,6 +664,9 @@ async def create_account_periods(db, accounts, periods):
                 hour_budget=d(pb * 0.028),
                 hour_earned=d(pe * 0.028),
                 hour_actual=d(pa * 0.028),
+                qty_budget=qb,
+                qty_actual=qa,
+                qty_earned=qa,  # earned qty = actual qty for simple installed-work accounts
             ))
 
     await db.flush()
@@ -648,8 +771,32 @@ async def create_commitments(db, contracts, accounts, periods):
 # Change orders
 # ---------------------------------------------------------------------------
 
-async def create_change_orders(db, project, accounts, periods):
+async def fix_bac_baselines(db, project, accounts) -> None:
+    """Recompute cost_bac_baseline = cost_budget - approved_CO_impacts for every account."""
+    from app.models.changes import ChangeLine as _CL, ChangeOrder as _CO
+    from app.models.enums import ChangeStatus as _CS
+    from sqlalchemy import func as _func
+
+    result = await db.execute(
+        select(_CL.cost_account_id, _func.sum(_CL.cost_impact).label("total"))
+        .join(_CO, _CO.id == _CL.change_order_id)
+        .where(_CO.project_id == project.id, _CO.status == _CS.approved)
+        .group_by(_CL.cost_account_id)
+    )
+    approved_impacts = {r.cost_account_id: Decimal(str(r.total)) for r in result.all()}
+
+    for acc in accounts:
+        impact = approved_impacts.get(acc.id, Decimal("0"))
+        acc.cost_bac_baseline = (acc.cost_budget or Decimal("0")) - impact
+        acc.cost_bac_approved = acc.cost_budget
+        acc.cost_bac_changes  = impact
+
+    await db.flush()
+
+
+async def create_change_orders(db, project, accounts, periods, qty_elements: dict | None = None):
     period_map = {p.code: p for p in periods}
+    qty_elements = qty_elements or {}
 
     def find_account(prefix: str):
         for a in accounts:
@@ -663,7 +810,7 @@ async def create_change_orders(db, project, accounts, periods):
          "2023-03", "2023-02-15", "2023-04-01",
          "Civil foundation scope increase due to unexpected subsurface conditions. "
          "Geotechnical investigation revealed soft soil layers requiring deeper pile installation.",
-         [("31-SC", 380_000), ("31-LC", 120_000)]),
+         [("31-SC", 380_000, "QM3", 500.0), ("31-LC", 120_000)]),
 
         ("CO-007", "Design revision — heat exchanger material upgrade",
          ChangeStatus.approved, ChangeCategory.growth, ChangeReason.design, ChangeImpact.cost,
@@ -677,7 +824,7 @@ async def create_change_orders(db, project, accounts, periods):
          "2024-01", "2023-12-20", None,
          "Premium labour rates and extended shifts required to recover two weeks of schedule "
          "delay on critical path piping spools. Client has requested completion by original milestone.",
-         [("34-SC", 420_000), ("34-LC", 180_000)]),
+         [("34-SC", 420_000, "QM", 2_000.0), ("34-LC", 180_000)]),
 
         ("CO-018", "Rate escalation — bulk material procurement",
          ChangeStatus.pending, ChangeCategory.trend, ChangeReason.rate, ChangeImpact.cost,
@@ -715,15 +862,32 @@ async def create_change_orders(db, project, accounts, periods):
         db.add(co)
         await db.flush()
 
-        for prefix, cost_impact in line_specs:
+        for line_spec in line_specs:
+            prefix, cost_impact = line_spec[0], line_spec[1]
+            qty_elem_code = line_spec[2] if len(line_spec) > 2 else None
+            qty_scope_delta = line_spec[3] if len(line_spec) > 3 else None
             acc = find_account(prefix)
+            qty_elem = qty_elements.get(qty_elem_code) if qty_elem_code else None
             if acc:
                 db.add(ChangeLine(
                     change_order_id=co.id,
                     cost_account_id=acc.id,
                     cost_impact=d(cost_impact),
                     hour_impact=d(cost_impact * 0.028),
+                    qty_element_id=qty_elem.id if qty_elem else None,
+                    qty_scope_impact=d(qty_scope_delta) if qty_scope_delta is not None else None,
                 ))
+                # For approved COs, apply the qty scope impact to account_qty_elements
+                if status == ChangeStatus.approved and qty_elem and qty_scope_delta:
+                    aqe_result = await db.execute(
+                        select(AccountQtyElement).where(
+                            AccountQtyElement.cost_account_id == acc.id,
+                            AccountQtyElement.qty_element_id == qty_elem.id,
+                        )
+                    )
+                    aqe = aqe_result.scalar_one_or_none()
+                    if aqe:
+                        aqe.qty_scope = (aqe.qty_scope or Decimal("0")) + Decimal(str(qty_scope_delta))
 
     await db.flush()
 
@@ -732,29 +896,53 @@ async def create_change_orders(db, project, accounts, periods):
 # Budget lines  (3 lines per account — quantity / rate / cost breakdown)
 # ---------------------------------------------------------------------------
 
-async def create_budget_lines(db, accounts):
+async def create_budget_lines(db, accounts, qty_elements: dict):
     for acc in accounts:
         budget = float(acc.cost_budget or 0)
-        cbs_code = ""
-        if acc.cbs_node_id:
-            # derive a short label from the account code
-            parts = acc.account_code.split("-")
-            cbs_code = parts[-1] if parts else ""
+        qty_assignments = ACCOUNT_QTY_MAP.get(acc.account_code, [])
 
-        lines = [
-            (f"Direct cost — {acc.description[:40]}",  None, None, budget * 0.70),
-            ("Indirect & overhead allocation",           None, None, budget * 0.20),
-            ("Contingency reserve",                      None, None, budget * 0.10),
-        ]
-
-        for line_desc, qty, unit, cost in lines:
+        if qty_assignments:
+            # Line 1: quantity-driven scope line linked to the primary element
+            elem_code, scope, _weight, unit_cost = qty_assignments[0]
+            elem = qty_elements.get(elem_code)
+            cost_line1 = budget * 0.70
             db.add(BudgetLine(
                 cost_account_id=acc.id,
-                description=line_desc,
-                cost=d(cost),
+                qty_element_id=elem.id if elem else None,
+                description=f"Scope — {acc.description[:45]}",
+                quantity=Decimal(str(scope)),
+                quantity_unit=elem.unit if elem else None,
+                unit_cost=Decimal(str(round(unit_cost, 4))),
+                hour_rate=Decimal(str(round(unit_cost * 0.028, 4))),
+                hours=d(cost_line1 * 0.028),
+                cost=d(cost_line1),
                 is_final=False,
                 imported=False,
             ))
+        else:
+            db.add(BudgetLine(
+                cost_account_id=acc.id,
+                description=f"Direct cost — {acc.description[:40]}",
+                hours=d(budget * 0.70 * 0.028),
+                cost=d(budget * 0.70),
+                is_final=False,
+                imported=False,
+            ))
+
+        db.add(BudgetLine(
+            cost_account_id=acc.id,
+            description="Indirect & overhead allocation",
+            cost=d(budget * 0.20),
+            is_final=False,
+            imported=False,
+        ))
+        db.add(BudgetLine(
+            cost_account_id=acc.id,
+            description="Contingency reserve",
+            cost=d(budget * 0.10),
+            is_final=False,
+            imported=False,
+        ))
 
     await db.flush()
 

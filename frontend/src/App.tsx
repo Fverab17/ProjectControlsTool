@@ -6,6 +6,7 @@ import { ProjectsScreen } from './components/projects/ProjectsScreen'
 import { CostControl } from './components/cost-control/CostControl'
 import { PlaceholderScreen } from './components/shared/PlaceholderScreen'
 import { ChangeManagement } from './components/changes/ChangeManagement'
+import { ProjectSetup } from './components/setup/ProjectSetup'
 
 export default function App() {
   const [screen, setScreen] = useState('projects')
@@ -54,7 +55,13 @@ export default function App() {
               Open a project first from the Projects screen.
             </div>
           )}
-          {screen === 'setup'       && <PlaceholderScreen label="Project Setup" />}
+          {screen === 'setup' && selectedProjectId ? (
+            <ProjectSetup projectId={selectedProjectId} />
+          ) : screen === 'setup' && (
+            <div className="h-full flex items-center justify-center" style={{ color: 'var(--ink-muted)', fontSize: 13 }}>
+              Open a project first from the Projects screen.
+            </div>
+          )}
           {screen === 'evm'         && <PlaceholderScreen label="EVM Dashboard" />}
           {screen === 'changes' && selectedProjectId ? (
             <ChangeManagement projectId={selectedProjectId} />

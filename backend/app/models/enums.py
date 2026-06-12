@@ -16,11 +16,19 @@ class ProjectRole(str, enum.Enum):
 
 
 class PctMethod(str, enum.Enum):
+    # --- simple / legacy methods ---
     manual = "manual"
     weighted_steps = "weighted_steps"
     rules_of_credit = "rules_of_credit"
     level_of_effort = "level_of_effort"
     fifty_fifty = "fifty_fifty"
+    # --- quantity-based methods (PRISM QAE / QTE family) ---
+    qae = "qae"        # Qty Actual-to-Date / Qty EAC  — preferred for discrete work
+    prg = "prg"        # Progress Tasks (weighted milestones with installed quantities)
+    # --- hours-based ---
+    hae = "hae"        # Hours Actual-to-Date / Hours EAC
+    # --- cost-based ---
+    cae = "cae"        # Cost Actual-to-Date / Cost EAC
 
 
 class EtcMethod(str, enum.Enum):

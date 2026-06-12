@@ -1,13 +1,14 @@
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CostAccount, Project, WbsNode
 from app.models.breakdown import Period
+from app.models.changes import ChangeLine, ChangeOrder
 from app.models.cost import CostAccountPeriod
-from app.models.enums import EtcMethod
+from app.models.enums import ChangeStatus, EtcMethod
 from app.schemas.cost_control import CostControlOut, PeriodCloseOut, WbsRowOut
 
 D = Decimal
@@ -90,6 +91,21 @@ async def get_cost_control(project_id: UUID, db: AsyncSession, period_code: str 
             for cap in cap_result.scalars().all():
                 period_actuals[cap.cost_account_id] = cap
 
+    # Approved change impacts per cost account (single query)
+    appr_result = await db.execute(
+        select(
+            ChangeLine.cost_account_id,
+            func.coalesce(func.sum(ChangeLine.cost_impact), D("0")).label("total"),
+        )
+        .join(ChangeOrder, ChangeOrder.id == ChangeLine.change_order_id)
+        .where(
+            ChangeOrder.project_id == project_id,
+            ChangeOrder.status == ChangeStatus.approved,
+        )
+        .group_by(ChangeLine.cost_account_id)
+    )
+    approved_by_account: dict[UUID, D] = {r.cost_account_id: D(str(r.total)) for r in appr_result.all()}
+
     wbs_code_by_id = {node.id: node.code for node in wbs_nodes}
     all_codes = {node.code for node in wbs_nodes}
 
@@ -116,6 +132,8 @@ async def get_cost_control(project_id: UUID, db: AsyncSession, period_code: str 
 
         cost_budget      = sum((a.cost_budget      or D("0")) for a in relevant)
         cost_open_commit = sum((a.cost_open_commit or D("0")) for a in relevant)
+        cost_bac_baseline     = sum((a.cost_bac_baseline or D("0")) for a in relevant)
+        cost_approved_changes = sum(approved_by_account.get(a.id, D("0")) for a in relevant)
         cost_period_incurred = sum(
             (period_actuals[a.id].actual or D("0")) if a.id in period_actuals else D("0")
             for a in relevant
@@ -153,6 +171,8 @@ async def get_cost_control(project_id: UUID, db: AsyncSession, period_code: str 
             is_rollup=is_rollup,
             parent_code=_parent_code(node.code),
             cost_budget=cost_budget,
+            cost_bac_baseline=cost_bac_baseline,
+            cost_approved_changes=cost_approved_changes,
             cost_earned=cost_earned,
             cost_actual=cost_actual,
             cost_period_incurred=cost_period_incurred,
@@ -209,6 +229,8 @@ async def get_cost_control(project_id: UUID, db: AsyncSession, period_code: str 
                     parent_code=node.code,
                     wbs_node_description=node.description,
                     cost_budget=a_budget,
+                    cost_bac_baseline=acc.cost_bac_baseline or D("0"),
+                    cost_approved_changes=approved_by_account.get(acc.id, D("0")),
                     cost_earned=a_earned,
                     cost_actual=a_actual,
                     cost_period_incurred=a_period_incurred,
@@ -221,6 +243,7 @@ async def get_cost_control(project_id: UUID, db: AsyncSession, period_code: str 
                     account_count=1,
                     account_code=acc.account_code,
                     etc_method=acc.etc_method.value,
+                    pct_complete_method=acc.pct_complete_method.value,
                 ))
 
     return CostControlOut(

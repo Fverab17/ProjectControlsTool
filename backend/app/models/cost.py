@@ -17,6 +17,44 @@ if TYPE_CHECKING:
     from app.models.users import Project
 
 
+class QtyElement(Base):
+    """Project-level catalog of physical quantity element types (m³, t, m, ea, m², …).
+    Analogous to PRISM's Control Element Definitions for type Q."""
+    __tablename__ = "qty_elements"
+    __table_args__ = (UniqueConstraint("project_id", "code"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    code: Mapped[str] = mapped_column(Text, nullable=False)         # e.g. 'QM3', 'QEA', 'QT'
+    description: Mapped[str | None] = mapped_column(Text)           # e.g. 'Cubic Metres'
+    unit: Mapped[str | None] = mapped_column(Text)                  # e.g. 'm³', 'ea', 't'
+    sort_order: Mapped[int | None] = mapped_column(Integer, default=0)
+
+    project: Mapped["Project"] = relationship(back_populates="qty_elements")
+    account_qty_elements: Mapped[list["AccountQtyElement"]] = relationship(back_populates="qty_element", cascade="all, delete-orphan")
+    budget_lines: Mapped[list["BudgetLine"]] = relationship(back_populates="qty_element")
+
+
+class AccountQtyElement(Base):
+    """Quantity subpane: one row per (cost account × quantity element).
+    Stores the scope, installed-to-date, and EAC quantities plus the weight
+    used in the QAE weighted-average progress calculation."""
+    __tablename__ = "account_qty_elements"
+    __table_args__ = (UniqueConstraint("cost_account_id", "qty_element_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cost_account_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("cost_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    qty_element_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("qty_elements.id"), nullable=False, index=True)
+
+    qty_scope: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0"))   # BAC-equivalent total scope
+    qty_actual: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0"))  # installed / completed to date
+    qty_eac: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0"))     # forecast at completion
+    qty_weight: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), default=Decimal("1"))   # weight in QAE weighted average
+
+    cost_account: Mapped["CostAccount"] = relationship(back_populates="qty_elements")
+    qty_element: Mapped["QtyElement"] = relationship(back_populates="account_qty_elements")
+
+
 class CostAccount(Base):
     __tablename__ = "cost_accounts"
     __table_args__ = (UniqueConstraint("project_id", "account_code"),)
@@ -98,7 +136,6 @@ class CostAccount(Base):
     project: Mapped["Project"] = relationship(back_populates="cost_accounts")
     wbs_node: Mapped["WbsNode | None"] = relationship(back_populates="cost_accounts")
     cbs_node: Mapped["CbsNode | None"] = relationship(back_populates="cost_accounts")
-    # foreign_keys required because two FKs point to curves
     curve: Mapped["Curve | None"] = relationship(back_populates="cost_accounts", foreign_keys=[curve_id])
     approved_curve: Mapped["Curve | None"] = relationship("Curve", foreign_keys=[approved_curve_id])
     vendor: Mapped["Vendor | None"] = relationship("Vendor", foreign_keys=[vendor_id])
@@ -107,6 +144,7 @@ class CostAccount(Base):
 
     periods: Mapped[list["CostAccountPeriod"]] = relationship(back_populates="cost_account", cascade="all, delete-orphan")
     budget_lines: Mapped[list["BudgetLine"]] = relationship(back_populates="cost_account", cascade="all, delete-orphan")
+    qty_elements: Mapped[list["AccountQtyElement"]] = relationship(back_populates="cost_account", cascade="all, delete-orphan")
     change_lines: Mapped[list["ChangeLine"]] = relationship(back_populates="cost_account")
     commitments: Mapped[list["Commitment"]] = relationship(back_populates="cost_account")
     invoice_lines: Mapped[list["InvoiceLine"]] = relationship(back_populates="cost_account")
@@ -134,9 +172,13 @@ class CostAccountPeriod(Base):
     hour_earned: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
     hour_actual: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
 
+    # Physical quantity columns — for the account's primary quantity element.
+    # Drives QEB/QCB budget-to-date progress methods and quantity S-curves.
+    qty_budget: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0"))
+    qty_actual: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0"))
+    qty_earned: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0"))
+
     # Snapshot fields — populated when the period is closed via close_period().
-    # Capture the forecast state at period close so historical views are accurate
-    # regardless of the account's ETC method (manual ETC cannot be recomputed retroactively).
     snap_pct_complete:        Mapped[Decimal | None] = mapped_column(Numeric(6,  4))
     snap_cost_earned:         Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
     snap_cost_actual_to_date: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
@@ -153,10 +195,13 @@ class BudgetLine(Base):
     id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     cost_account_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("cost_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
     change_order_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("change_orders.id"))
+    qty_element_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("qty_elements.id"), index=True)
+
     description: Mapped[str | None] = mapped_column(Text)
     quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0"))
     quantity_unit: Mapped[str | None] = mapped_column(Text)
-    hour_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0"))
+    unit_cost: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0"))   # cost per qty unit
+    hour_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0"))   # hours per qty unit
     hours: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
     cost: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
     x_cost: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=Decimal("0"))
@@ -167,3 +212,4 @@ class BudgetLine(Base):
 
     cost_account: Mapped["CostAccount"] = relationship(back_populates="budget_lines")
     change_order: Mapped["ChangeOrder | None"] = relationship(back_populates="budget_lines")
+    qty_element: Mapped["QtyElement | None"] = relationship(back_populates="budget_lines")
